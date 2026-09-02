@@ -63,8 +63,12 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
 
-  // ROM Storage Directory (/public/roms)
-  const romsDir = path.join(process.cwd(), "public", "roms");
+  // ROM Storage Directory (/public/roms or /dist/roms in production)
+  const isProduction = process.env.NODE_ENV === "production";
+  const publicRomsDir = path.join(process.cwd(), "public", "roms");
+  const distRomsDir = path.join(process.cwd(), "dist", "roms");
+  const romsDir = isProduction && fs.existsSync(distRomsDir) ? distRomsDir : publicRomsDir;
+
   if (!fs.existsSync(romsDir)) {
     fs.mkdirSync(romsDir, { recursive: true });
   }

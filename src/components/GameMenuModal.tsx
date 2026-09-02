@@ -242,18 +242,18 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
             </div>
           </div>
 
-          {/* Folder ROMs (/public/roms/) */}
+          {/* Available ROMs */}
           <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3 flex flex-col gap-2">
             <div className="flex items-center justify-between text-xs">
               <span className="font-bold text-slate-300 flex items-center gap-1.5">
                 <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
-                Папка ROMів <span className="font-mono text-[10px] text-amber-300/80">/public/roms/</span>:
+                Доступні ігри:
               </span>
               <button
                 onClick={fetchServerRoms}
                 disabled={isLoadingRoms}
                 className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
-                title="Оновити список з папки /public/roms"
+                title="Оновити список доступних ігор"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isLoadingRoms ? "animate-spin text-indigo-400" : ""}`} />
               </button>

@@ -212,20 +212,20 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
           </div>
         </div>
 
-        {/* 2. Folder ROMs (/public/roms/) */}
+        {/* 2. Available ROMs */}
         <div className="bg-slate-950/60 border border-slate-800/90 rounded-xl p-3 flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
               <span className="text-xs font-bold text-slate-200">
-                Папка ROM файлів <span className="font-mono text-[10px] text-amber-300/80">/public/roms/</span>
+                Доступні ігри
               </span>
             </div>
             <button
               onClick={fetchServerRoms}
               disabled={isLoadingRoms}
               className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
-              title="Оновити список з папки /public/roms"
+              title="Оновити список доступних ігор"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoadingRoms ? "animate-spin text-indigo-400" : ""}`} />
             </button>
