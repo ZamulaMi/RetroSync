@@ -51,14 +51,38 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && onOpenMenu) {
+      // Don't intercept when user is typing in form inputs
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target as HTMLElement)?.isContentEditable
+      ) {
+        return;
+      }
+
+      if ((e.key === "Escape" || e.code === "KeyM" || e.key === "F1") && onOpenMenu) {
         e.preventDefault();
         onOpenMenu();
+      }
+
+      if (e.key === "F2" || (e.ctrlKey && e.code === "KeyR" && !e.shiftKey)) {
+        // Prevent browser page reload on Ctrl+R or F2 if playing game, and reset game instead
+        if (isAudioStarted) {
+          e.preventDefault();
+          handleReset();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onOpenMenu]);
+  }, [onOpenMenu, isAudioStarted, controller]);
+
+  const triggerButtonPress = (button: keyof typeof controller.touchState) => {
+    controller.touchState[button] = true;
+    setTimeout(() => {
+      controller.touchState[button] = false;
+    }, 150);
+  };
 
   const handleStartAudio = async () => {
     await controller.emulator.initAudio();
@@ -68,12 +92,12 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
 
   const handleTogglePause = () => {
     controller.emulator.isPaused = !controller.emulator.isPaused;
-    showToast(controller.emulator.isPaused ? "Emulation Paused" : "Emulation Resumed");
+    showToast(controller.emulator.isPaused ? "Пауза" : "Гру відновлено");
   };
 
   const handleReset = () => {
     controller.reset();
-    showToast("Emulator Reset");
+    showToast("Гру перезапущено (Reset)");
   };
 
   const handleSpeedChange = (newSpeed: number) => {
@@ -168,8 +192,44 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
 
         {/* Overlay Toast Notification */}
         {flashMessage && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-indigo-600/90 text-white font-mono text-xs px-3 py-1.5 rounded-md shadow-lg border border-indigo-400 backdrop-blur-sm animate-fade-in pointer-events-none z-30">
+          <div className="absolute top-12 left-1/2 -translate-x-1/2 bg-indigo-600/90 text-white font-mono text-xs px-3 py-1.5 rounded-md shadow-lg border border-indigo-400 backdrop-blur-sm animate-fade-in pointer-events-none z-30">
             {flashMessage}
+          </div>
+        )}
+
+        {/* In-Game Paused Screen Overlay */}
+        {isAudioStarted && controller.emulator.isPaused && (
+          <div className="absolute inset-0 bg-slate-950/75 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center z-15 select-none animate-fade-in">
+            <div className="bg-slate-900/90 border border-slate-700 p-4 rounded-2xl shadow-2xl flex flex-col items-center max-w-xs w-full gap-3">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm uppercase tracking-wider">
+                <Pause className="w-4 h-4" /> Гра призупинена
+              </div>
+              <div className="flex flex-col gap-2 w-full">
+                <button
+                  id="paused-overlay-resume-btn"
+                  onClick={handleTogglePause}
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" /> Продовжити гру
+                </button>
+                {onOpenMenu && (
+                  <button
+                    id="paused-overlay-open-menu-btn"
+                    onClick={onOpenMenu}
+                    className="w-full py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Menu className="w-3.5 h-3.5" /> Головне меню гри
+                  </button>
+                )}
+                <button
+                  id="paused-overlay-reset-btn"
+                  onClick={handleReset}
+                  className="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Перезапустити
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -281,7 +341,7 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
             id="reset-emulator-btn"
             onClick={handleReset}
             className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-            title="Reset Game"
+            title="Перезапустити гру / Reset Game (F2)"
           >
             <RotateCcw className="w-4 h-4 text-amber-400" />
           </button>
@@ -327,6 +387,54 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
             title="Toggle Screen Aspect (4:3 CRT / 1:1 Pixel Match / Full Fill)"
           >
             {scaleMode === "4:3" ? "4:3 CRT" : scaleMode === "1:1" ? "1:1 Pixel" : "Full Fill"}
+          </button>
+        </div>
+
+        {/* Quick Gamepad Buttons (START, SELECT, A, B) */}
+        <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs">
+          <button
+            id="quick-btn-start"
+            onClick={() => {
+              triggerButtonPress("start");
+              showToast("Pressed START");
+            }}
+            className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded font-mono font-bold text-[11px] transition-all active:scale-95 cursor-pointer"
+            title="Press START (Enter)"
+          >
+            START
+          </button>
+          <button
+            id="quick-btn-select"
+            onClick={() => {
+              triggerButtonPress("select");
+              showToast("Pressed SELECT");
+            }}
+            className="px-2 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 rounded font-mono font-bold text-[11px] transition-all active:scale-95 cursor-pointer"
+            title="Press SELECT (Shift)"
+          >
+            SELECT
+          </button>
+          <button
+            id="quick-btn-b"
+            onClick={() => {
+              triggerButtonPress("b");
+              showToast("Pressed B");
+            }}
+            className="w-7 h-7 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-full font-bold text-xs flex items-center justify-center transition-all active:scale-95 cursor-pointer"
+            title="Press B (Z)"
+          >
+            B
+          </button>
+          <button
+            id="quick-btn-a"
+            onClick={() => {
+              triggerButtonPress("a");
+              showToast("Pressed A");
+            }}
+            className="w-7 h-7 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-full font-bold text-xs flex items-center justify-center transition-all active:scale-95 cursor-pointer"
+            title="Press A (X)"
+          >
+            A
           </button>
         </div>
 

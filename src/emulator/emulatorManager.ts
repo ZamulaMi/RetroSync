@@ -23,7 +23,9 @@ export class UniversalEmulator {
   private rawRomBytes: Uint8Array | null = null;
 
   // Snapshot ring buffer for rollback
+  public rollbackTrackingEnabled: boolean = false;
   private snapshotHistory: Map<number, Record<string, unknown>> = new Map();
+  private snapshotKeys: number[] = [];
   private maxHistoryFrames: number = 120;
 
   // Save state slots (1-5)
@@ -64,12 +66,17 @@ export class UniversalEmulator {
     await this.audio.resume();
   }
 
+  private clearSnapshotHistory() {
+    this.snapshotHistory.clear();
+    this.snapshotKeys = [];
+  }
+
   public loadRomFromBuffer(fileName: string, bytes: Uint8Array): boolean {
     const detected = detectSystemFromROM(fileName, bytes);
     this.system = detected;
     this.title = fileName.replace(/\.[^/.]+$/, "");
     this.rawRomBytes = bytes;
-    this.snapshotHistory.clear();
+    this.clearSnapshotHistory();
     this.syncCanvasDimensions();
 
     let success = false;
@@ -87,7 +94,7 @@ export class UniversalEmulator {
   }
 
   public loadDemoRom(demoId: string): boolean {
-    this.snapshotHistory.clear();
+    this.clearSnapshotHistory();
     if (demoId.includes("gb")) {
       this.system = "GB";
       this.title = "Game Boy Link Duel";
@@ -154,19 +161,32 @@ export class UniversalEmulator {
   public step(renderScreen: boolean = true) {
     if (!this.isLoaded || this.isPaused) return;
 
-    if (this.system === "GB" || this.system === "GBC") {
-      this.gbCore.stepFrame(renderScreen);
-    } else {
-      this.nesCore.stepFrame(renderScreen);
+    try {
+      if (this.system === "GB" || this.system === "GBC") {
+        this.gbCore.stepFrame(renderScreen);
+      } else {
+        this.nesCore.stepFrame(renderScreen);
+      }
+    } catch (err) {
+      console.warn("Emulator step error:", err);
     }
 
-    // Save snapshot in history ring buffer for rollback
-    const frame = this.getCurrentFrame();
-    if (frame % 2 === 0) {
-      this.snapshotHistory.set(frame, this.saveSnapshot());
-      if (this.snapshotHistory.size > this.maxHistoryFrames) {
-        const oldest = Math.min(...Array.from(this.snapshotHistory.keys()));
-        this.snapshotHistory.delete(oldest);
+    // Save snapshot in history ring buffer for rollback only when rollback netplay is actively tracking
+    if (this.rollbackTrackingEnabled) {
+      try {
+        const frame = this.getCurrentFrame();
+        if (frame % 2 === 0) {
+          this.snapshotHistory.set(frame, this.saveSnapshot());
+          this.snapshotKeys.push(frame);
+          while (this.snapshotKeys.length > this.maxHistoryFrames) {
+            const oldest = this.snapshotKeys.shift();
+            if (oldest !== undefined) {
+              this.snapshotHistory.delete(oldest);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Snapshot history error:", err);
       }
     }
   }
@@ -255,9 +275,13 @@ export class UniversalEmulator {
   }
 
   public reset() {
-    this.snapshotHistory.clear();
+    this.clearSnapshotHistory();
     if (this.system === "GB" || this.system === "GBC") {
-      this.gbCore.reset();
+      if (this.rawRomBytes) {
+        this.gbCore.loadROM(this.rawRomBytes);
+      } else {
+        this.gbCore.reset();
+      }
     } else {
       this.nesCore.reset();
     }

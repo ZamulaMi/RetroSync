@@ -28,6 +28,7 @@ export class NesEmulator {
   private isLoaded: boolean = false;
   private isDemoMode: boolean = false;
   private demoType: "arena" | "pong" | "snes" | "gba" = "arena";
+  private rawRomData: Uint8Array | string | null = null;
   private currentFrame: number = 0;
   private p1InputMask: number = 0;
   private p2InputMask: number = 0;
@@ -78,7 +79,9 @@ export class NesEmulator {
     // Initialize JSNES
     this.nes = new jsnes.NES({
       onFrame: (buffer: Uint32Array) => {
-        // buffer is 256*240 pixel integers (0x00RRGGBB)
+        // buffer from JSNES contains 256*240 pixel integers in native 0x00BBGGRR format
+        // In 32-bit Little-Endian Canvas ImageData (ABGR layout: 0xAABBGGRR),
+        // adding 0xFF000000 alpha maps 1:1 perfectly to correct screen colors.
         const len = buffer.length;
         for (let i = 0; i < len; i++) {
           this.frameBuffer32[i] = 0xff000000 | buffer[i];
@@ -89,10 +92,118 @@ export class NesEmulator {
       },
       sampleRate: 44100,
     });
-    const nesInternal = this.nes as unknown as { ppu?: { clipToTvSize: boolean } };
-    if (nesInternal.ppu) {
-      nesInternal.ppu.clipToTvSize = false;
+    this.patchPpuSpriteRendering();
+  }
+
+  /**
+   * Fixes 8x16 sprite CHR pattern table 1 tile offset bug in JSNES PPU.
+   * In JSNES: `let top = (sprTile & 1) !== 0 ? topTileNum - 1 + 256 : topTileNum;`
+   * Because topTileNum was already `sprTile & 0xfe` (even), subtracting 1 incorrectly shifted
+   * pattern table 1 tiles by -1, corrupting spawn sparkle stars, bullets/shots, bonuses,
+   * and explosions in games like Battle City. The correct base is `topTileNum + 256`.
+   * We apply this fix both to the PPU Prototype and to the active PPU instance.
+   */
+  private patchPpuSpriteRendering() {
+    const nesAny = this.nes as unknown as { ppu?: any };
+    if (!nesAny.ppu) return;
+
+    const ppuProto = Object.getPrototypeOf(nesAny.ppu);
+    const renderSpritesFn = function (this: any, startscan: number, scancount: number, bgPri: number) {
+      if (this.f_spVisibility !== 1) return;
+      const mmap = this.nes.mmap;
+      const ptTile = this.ptTile;
+      const buffer = this.buffer;
+      const sprPalette = this.sprPalette;
+      const pixrendered = this.pixrendered;
+
+      for (let scan = startscan; scan < startscan + scancount; scan++) {
+        if (scan < 0 || scan >= 240) continue;
+        const count = this.scanlineSpriteCount[scan];
+        const oamBase = scan * 32;
+
+        for (let i = 0; i < count; i++) {
+          const sprY = this.scanlineSecondaryOAM[oamBase + i * 4 + 0];
+          const sprTile = this.scanlineSecondaryOAM[oamBase + i * 4 + 1];
+          const sprAttr = this.scanlineSecondaryOAM[oamBase + i * 4 + 2];
+          const sprX = this.scanlineSecondaryOAM[oamBase + i * 4 + 3];
+
+          const vertFlip = (sprAttr >> 7) & 1;
+          const horiFlip = (sprAttr >> 6) & 1;
+          const priority = (sprAttr >> 5) & 1;
+          const palAdd = (sprAttr & 3) << 2;
+
+          if (priority !== bgPri) continue;
+
+          if (this.f_spriteSize === 0) {
+            // 8x8 sprites
+            const tileIndex = this.f_spPatternTable === 0 ? sprTile : sprTile + 256;
+            const sprBaseAddr = this.f_spPatternTable === 0 ? 0x0000 : 0x1000;
+            const dy = sprY + 1;
+            const fineY = scan - dy;
+            if (fineY < 0 || fineY >= 8) continue;
+
+            ptTile[tileIndex].render(
+              buffer,
+              0,
+              fineY,
+              8,
+              fineY + 1,
+              sprX,
+              dy,
+              palAdd,
+              sprPalette,
+              horiFlip,
+              vertFlip,
+              i,
+              pixrendered
+            );
+            mmap.latchAccess(sprBaseAddr + sprTile * 16 + 8);
+          } else {
+            // 8x16 sprites: bit 0 selects pattern table ($0000 / $1000)
+            const sprBaseAddr = (sprTile & 1) !== 0 ? 0x1000 : 0x0000;
+            const topTileNum = sprTile & 0xfe;
+            const top = (sprTile & 1) !== 0 ? topTileNum + 256 : topTileNum;
+            const dy = sprY + 1;
+            const fineY = scan - dy;
+            if (fineY < 0 || fineY >= 16) continue;
+
+            let tileOffset: number;
+            let tileFineY: number;
+            if (fineY < 8) {
+              tileOffset = vertFlip ? 1 : 0;
+              tileFineY = fineY;
+            } else {
+              tileOffset = vertFlip ? 0 : 1;
+              tileFineY = fineY - 8;
+            }
+
+            ptTile[top + tileOffset].render(
+              buffer,
+              0,
+              tileFineY,
+              8,
+              tileFineY + 1,
+              sprX,
+              dy + (fineY < 8 ? 0 : 8),
+              palAdd,
+              sprPalette,
+              horiFlip,
+              vertFlip,
+              i,
+              pixrendered
+            );
+            mmap.latchAccess(sprBaseAddr + topTileNum * 16 + 8);
+            mmap.latchAccess(sprBaseAddr + (topTileNum + 1) * 16 + 8);
+          }
+        }
+      }
+    };
+
+    if (ppuProto) {
+      ppuProto.renderSpritesPartially = renderSpritesFn;
     }
+    nesAny.ppu.renderSpritesPartially = renderSpritesFn;
+    nesAny.ppu.clipToTvSize = false;
   }
 
   public setCanvas(canvas: HTMLCanvasElement) {
@@ -107,6 +218,7 @@ export class NesEmulator {
   public loadROM(romData: Uint8Array | string, isDemo: boolean = false, demoKind: "arena" | "pong" | "snes" | "gba" = "arena"): boolean {
     this.isDemoMode = isDemo;
     this.demoType = demoKind;
+    this.rawRomData = isDemo ? null : romData;
     this.currentFrame = 0;
     this.prevP1Mask = 0;
     this.prevP2Mask = 0;
@@ -125,9 +237,16 @@ export class NesEmulator {
     try {
       if (typeof romData === "string") {
         this.nes.loadROM(romData);
-      } else {
-        this.nes.loadROM(romData);
+      } else if (romData instanceof Uint8Array) {
+        // Convert to binary string to ensure 100% compatibility across all JSNES loaders
+        let binaryStr = "";
+        const len = romData.length;
+        for (let i = 0; i < len; i++) {
+          binaryStr += String.fromCharCode(romData[i]);
+        }
+        this.nes.loadROM(binaryStr);
       }
+      this.patchPpuSpriteRendering();
       this.isLoaded = true;
       return true;
     } catch (err) {
@@ -229,7 +348,18 @@ export class NesEmulator {
 
     // Real NES ROM execution via JSNES
     this.applyInputs();
-    this.nes.frame();
+    try {
+      this.nes.frame();
+    } catch (err) {
+      console.warn("JSNES execution error, gracefully falling back to Demo Core:", err);
+      this.isDemoMode = true;
+      this.demoType = "arena";
+      this.resetDemoState();
+      this.demoState.bannerText = "CPU EXCEPTION RECOVERED";
+      this.demoState.bannerTimer = 180;
+      this.stepInteractiveDemo(renderScreen);
+      return;
+    }
 
     if (renderScreen && this.canvasCtx && this.imageBuffer) {
       const data32 = new Uint32Array(this.imageBuffer.data.buffer);
@@ -935,32 +1065,44 @@ export class NesEmulator {
         demoState: JSON.parse(JSON.stringify(this.demoState)),
       };
     }
-    const rawState = this.nes.toJSON();
-    return {
-      frame: this.currentFrame,
-      p1Mask: this.p1InputMask,
-      p2Mask: this.p2InputMask,
-      prevP1: this.prevP1Mask,
-      prevP2: this.prevP2Mask,
-      state: rawState,
-    };
+    try {
+      const rawState = this.nes.toJSON();
+      return {
+        frame: this.currentFrame,
+        p1Mask: this.p1InputMask,
+        p2Mask: this.p2InputMask,
+        prevP1: this.prevP1Mask,
+        prevP2: this.prevP2Mask,
+        state: rawState,
+      };
+    } catch {
+      return {
+        frame: this.currentFrame,
+        p1Mask: this.p1InputMask,
+        p2Mask: this.p2InputMask,
+      };
+    }
   }
 
   /**
    * Restore state during rollback
    */
   public loadSnapshot(snapshot: Record<string, unknown>): void {
-    this.currentFrame = snapshot.frame as number;
-    this.p1InputMask = snapshot.p1Mask as number;
-    this.p2InputMask = snapshot.p2Mask as number;
+    this.currentFrame = (snapshot.frame as number) || 0;
+    this.p1InputMask = (snapshot.p1Mask as number) || 0;
+    this.p2InputMask = (snapshot.p2Mask as number) || 0;
     if (this.isDemoMode && snapshot.demoState) {
       this.demoState = snapshot.demoState as typeof this.demoState;
       return;
     }
-    this.prevP1Mask = snapshot.prevP1 as number;
-    this.prevP2Mask = snapshot.prevP2 as number;
-    if (snapshot.state) {
-      this.nes.fromJSON(snapshot.state as jsnes.EmulatorData);
+    this.prevP1Mask = (snapshot.prevP1 as number) || 0;
+    this.prevP2Mask = (snapshot.prevP2 as number) || 0;
+    if (snapshot.state && !this.isDemoMode) {
+      try {
+        this.nes.fromJSON(snapshot.state as jsnes.EmulatorData);
+      } catch (err) {
+        console.warn("Failed to restore NES snapshot:", err);
+      }
     }
   }
 
@@ -1003,7 +1145,12 @@ export class NesEmulator {
     if (this.isDemoMode) {
       this.resetDemoState();
     } else if (this.isLoaded) {
-      this.nes.reset();
+      if (this.rawRomData) {
+        this.loadROM(this.rawRomData, false, this.demoType);
+      } else {
+        this.nes.reloadROM();
+        this.patchPpuSpriteRendering();
+      }
     }
   }
 }

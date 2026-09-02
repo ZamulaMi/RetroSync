@@ -72,6 +72,11 @@ export class RetroAudioEngine {
     if (nextWrite !== this.readIndex) {
       this.sampleBuffer[this.writeIndex] = sample;
       this.writeIndex = nextWrite;
+    } else {
+      // Buffer full: advance readIndex slightly to drop oldest samples and avoid audio backlog lag
+      this.readIndex = (this.readIndex + 512) % this.bufferCapacity;
+      this.sampleBuffer[this.writeIndex] = sample;
+      this.writeIndex = nextWrite;
     }
   }
 

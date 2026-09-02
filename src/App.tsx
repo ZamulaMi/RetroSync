@@ -294,8 +294,11 @@ export default function App() {
             currentSystem={system}
             syncState={syncState}
             onLoadRomBytes={handleLoadRomBytes}
-            onLoadDemoRom={handleLoadDemoRom}
             onInitiateGameSwitch={handleInitiateGameSwitch}
+            onOpenMenu={() => {
+              controller.emulator.isPaused = true;
+              setShowMenuModal(true);
+            }}
           />
         </div>
 
@@ -368,27 +371,27 @@ export default function App() {
       {/* In-Game Main Menu / Game Selector Modal */}
       <GameMenuModal
         isOpen={showMenuModal}
-        onClose={() => setShowMenuModal(false)}
+        onClose={() => {
+          setShowMenuModal(false);
+          controller.emulator.isPaused = false;
+        }}
         currentGameTitle={gameTitle}
         currentSystem={system}
+        activeSaveSlot={activeSaveSlot}
+        setActiveSaveSlot={setActiveSaveSlot}
+        onSaveState={handleSaveState}
+        onLoadState={handleLoadState}
         onRestartGame={() => {
-          controller.emulator.reset();
+          controller.reset();
         }}
-        onSelectGame={(demo) => {
-          if (room && myRole === "player1") {
-            handleInitiateGameSwitch(demo.title, demo.system, demo.id);
-          } else {
-            handleLoadDemoRom(demo);
-          }
-        }}
+        onLoadRomBytes={handleLoadRomBytes}
         onOpenControls={() => setShowControlsModal(true)}
-        onOpenUpload={() => {
-          const uploader = document.getElementById("rom-dropzone");
-          if (uploader) {
-            uploader.scrollIntoView({ behavior: "smooth" });
-            uploader.click();
-          }
-        }}
+        filter={screenFilter}
+        onFilterChange={setScreenFilter}
+        volume={volume}
+        isMuted={isMuted}
+        onVolumeChange={handleVolumeChange}
+        onToggleMute={handleToggleMute}
       />
 
       {/* Netplay Architecture Specification Modal */}

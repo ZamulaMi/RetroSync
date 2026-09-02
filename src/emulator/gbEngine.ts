@@ -44,12 +44,12 @@ export class GameBoyEmulator {
   private vram: Uint8Array;
   private isGBC: boolean = false;
 
-  // Classic Game Boy 4-shade green palette
+  // Classic Game Boy 4-shade green palette in Little-Endian Canvas format (0xAABBGGRR)
   private classicPalette = [
-    0xffe0f8d0, // Lightest green
-    0xff88c070, // Light green
-    0xff346856, // Dark green
-    0xff081820, // Darkest green
+    0xff0fbc9b, // Lightest DMG green (#9bbc0f)
+    0xff0fac8b, // Light green (#8bac0f)
+    0xff306230, // Dark green (#306230)
+    0xff0f380f, // Darkest green (#0f380f)
   ];
 
   constructor(audioEngine: RetroAudioEngine) {

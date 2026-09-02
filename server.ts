@@ -1,6 +1,7 @@
 import express from "express";
 import http from "http";
 import path from "path";
+import fs from "fs";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer as createViteServer } from "vite";
 
@@ -62,6 +63,12 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
 
+  // ROM Storage Directory (/public/roms)
+  const romsDir = path.join(process.cwd(), "public", "roms");
+  if (!fs.existsSync(romsDir)) {
+    fs.mkdirSync(romsDir, { recursive: true });
+  }
+
   // REST API Routes
   app.get("/api/health", (_req, res) => {
     res.json({
@@ -71,6 +78,82 @@ async function startServer() {
       timestamp: Date.now(),
     });
   });
+
+  // Get ROMs located in /public/roms folder
+  app.get("/api/roms", (_req, res) => {
+    try {
+      if (!fs.existsSync(romsDir)) {
+        return res.json([]);
+      }
+      const files = fs.readdirSync(romsDir);
+      const romFiles = files
+        .filter((f) => {
+          const lower = f.toLowerCase();
+          return (
+            lower.endsWith(".nes") ||
+            lower.endsWith(".gba") ||
+            lower.endsWith(".gb") ||
+            lower.endsWith(".gbc") ||
+            lower.endsWith(".sfc") ||
+            lower.endsWith(".smc") ||
+            lower.endsWith(".bin")
+          );
+        })
+        .map((filename) => {
+          const fullPath = path.join(romsDir, filename);
+          const stat = fs.statSync(fullPath);
+          const lower = filename.toLowerCase();
+          let system = "NES";
+          if (lower.endsWith(".gba")) system = "GBA";
+          else if (lower.endsWith(".gbc")) system = "GBC";
+          else if (lower.endsWith(".gb")) system = "GB";
+          else if (lower.endsWith(".sfc") || lower.endsWith(".smc")) system = "SNES";
+
+          // Clean title for display
+          const title = filename.replace(/\.[^/.]+$/, "").replace(/[_.-]+/g, " ");
+
+          return {
+            filename,
+            title,
+            system,
+            size: stat.size,
+            url: `/roms/${encodeURIComponent(filename)}`,
+            modifiedAt: stat.mtimeMs,
+          };
+        });
+
+      res.json(romFiles);
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to list ROMs", details: err.message });
+    }
+  });
+
+  // Upload a ROM file directly to /public/roms folder
+  app.post("/api/roms/upload", (req, res) => {
+    try {
+      const { filename, base64Data } = req.body;
+      if (!filename || !base64Data) {
+        return res.status(400).json({ error: "filename and base64Data are required" });
+      }
+
+      const safeFilename = path.basename(filename);
+      const targetPath = path.join(romsDir, safeFilename);
+      const buffer = Buffer.from(base64Data, "base64");
+      fs.writeFileSync(targetPath, buffer);
+
+      res.json({
+        success: true,
+        filename: safeFilename,
+        size: buffer.length,
+        url: `/roms/${encodeURIComponent(safeFilename)}`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to save ROM", details: err.message });
+    }
+  });
+
+  // Statically serve ROM files
+  app.use("/roms", express.static(romsDir));
 
   // Get active public rooms
   app.get("/api/rooms", (_req, res) => {

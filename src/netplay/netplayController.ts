@@ -690,20 +690,31 @@ export class NetplayController {
   }
 
   /**
-   * Main 60 FPS Emulation & Netplay Loop
+   * Main 60 FPS Emulation & Netplay Loop with Precision Fixed-Delta Timing Accumulator
    */
   public start() {
     if (this.isRunning) return;
     this.isRunning = true;
     this.emulator.isPaused = false;
     this.lastFrameTimestamp = performance.now();
+    let accumulator = 0;
 
     const loop = (timestamp: number) => {
       if (!this.isRunning) return;
 
-      const elapsed = timestamp - this.lastFrameTimestamp;
-      if (elapsed >= this.frameDurationMs * 0.9) {
-        this.lastFrameTimestamp = timestamp;
+      let delta = timestamp - this.lastFrameTimestamp;
+      if (delta > 200) delta = 200; // Clamp against background tab pauses
+      this.lastFrameTimestamp = timestamp;
+      accumulator += delta;
+
+      // Update rollback tracking active status based on peer connectivity & mode
+      const isPeerActive = this.peer.isConnected() || (this.currentRoom && this.currentRoom.participants.length > 1);
+      this.emulator.rollbackTrackingEnabled = !!(isPeerActive && this.netplayMode === "rollback");
+
+      let steps = 0;
+      while (accumulator >= this.frameDurationMs && steps < 2) {
+        accumulator -= this.frameDurationMs;
+        steps++;
 
         if (this.emulator.isLoaded && !this.emulator.isPaused) {
           const localInput = this.pollLocalInput();
@@ -716,6 +727,10 @@ export class NetplayController {
             if (this.onMetricsUpdate) this.onMetricsUpdate(this.lockstepEngine.metrics);
           }
         }
+      }
+
+      if (accumulator > this.frameDurationMs * 2) {
+        accumulator = 0;
       }
 
       this.animFrameId = requestAnimationFrame(loop);

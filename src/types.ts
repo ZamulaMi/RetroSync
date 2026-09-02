@@ -135,3 +135,13 @@ export interface ChatMessage {
   timestamp: number;
   isSystem?: boolean;
 }
+
+export interface ServerRomFile {
+  filename: string;
+  title: string;
+  system: ConsoleSystem;
+  size: number;
+  url: string;
+  modifiedAt: number;
+}
+
