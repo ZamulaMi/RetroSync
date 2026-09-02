@@ -1,0 +1,7 @@
+{
+  "name": "Retro ROM Emulator & P2P Netplay",
+  "description": "High-performance classic console emulator supporting NES, SNES, GB, and GBA ROMs with real-time P2P Rollback Netplay over WebRTC DataChannels.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

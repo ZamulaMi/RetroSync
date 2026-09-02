@@ -1,0 +1,723 @@
+import express from "express";
+import http from "http";
+import path from "path";
+import { WebSocketServer, WebSocket } from "ws";
+import { createServer as createViteServer } from "vite";
+
+interface RoomParticipant {
+  ws: WebSocket;
+  peerId: string;
+  username: string;
+  role: "player1" | "player2" | "spectator";
+  isReady: boolean;
+  ping: number;
+}
+
+interface Room {
+  id: string;
+  name: string;
+  hostId: string;
+  gameTitle: string;
+  gameId?: string;
+  system: string;
+  romHash?: string;
+  romSize?: number;
+  netplayMode: "rollback" | "lockstep";
+  frameDelay: number;
+  participants: Map<string, RoomParticipant>;
+  createdAt: number;
+  isPrivate: boolean;
+  inviteToken?: string;
+  supportedGames?: string[];
+}
+
+interface MatchmakingTicket {
+  ticketId: string;
+  peerId: string;
+  ws: WebSocket;
+  username: string;
+  consoleSystem: string; // "NES" | "SNES" | "GBA" | "GB" | "GBC" | "ANY"
+  supportedGames: string[]; // ["nes-netplay-arena-2p", ...] or ["ANY"]
+  netplayMode: "rollback" | "lockstep";
+  joinedAt: number;
+}
+
+const rooms = new Map<string, Room>();
+const matchmakingQueue = new Map<string, MatchmakingTicket>();
+
+// Default demo fallback games by system
+const SYSTEM_DEFAULT_GAMES: Record<string, { id: string; title: string; system: string }> = {
+  NES: { id: "nes-netplay-arena-2p", title: "Retro 2P Combat Arena (NES)", system: "NES" },
+  SNES: { id: "snes-super-strike", title: "Super Famicom 16-Bit Battle (SNES)", system: "SNES" },
+  GBA: { id: "gba-micro-combat", title: "GBA 32-Bit Dual Strike (GBA)", system: "GBA" },
+  GB: { id: "gb-link-battle", title: "Game Boy Link Duel (GB)", system: "GB" },
+  GBC: { id: "gb-link-battle", title: "Game Boy Link Duel (GB)", system: "GB" },
+  ANY: { id: "nes-netplay-arena-2p", title: "Retro 2P Combat Arena (NES)", system: "NES" },
+};
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+  const server = http.createServer(app);
+
+  app.use(express.json({ limit: "50mb" }));
+
+  // REST API Routes
+  app.get("/api/health", (_req, res) => {
+    res.json({
+      status: "ok",
+      activeRooms: rooms.size,
+      matchmakingQueueLength: matchmakingQueue.size,
+      timestamp: Date.now(),
+    });
+  });
+
+  // Get active public rooms
+  app.get("/api/rooms", (_req, res) => {
+    const publicRooms = Array.from(rooms.values())
+      .filter((r) => !r.isPrivate)
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        hostId: r.hostId,
+        gameTitle: r.gameTitle,
+        gameId: r.gameId,
+        system: r.system,
+        netplayMode: r.netplayMode,
+        playerCount: r.participants.size,
+        hasPlayer1: Array.from(r.participants.values()).some((p) => p.role === "player1"),
+        hasPlayer2: Array.from(r.participants.values()).some((p) => p.role === "player2"),
+        isPrivate: false,
+        createdAt: r.createdAt,
+      }));
+    res.json(publicRooms);
+  });
+
+  // Get Matchmaking queue telemetry
+  app.get("/api/matchmaking/stats", (_req, res) => {
+    let totalPlayers = 0;
+    for (const r of rooms.values()) {
+      totalPlayers += r.participants.size;
+    }
+    totalPlayers += matchmakingQueue.size;
+
+    res.json({
+      queueLength: matchmakingQueue.size,
+      activeRooms: rooms.size,
+      onlinePlayers: Math.max(totalPlayers, 1),
+    });
+  });
+
+  // Matchmaking Resolution Engine
+  function tryMatchmaking() {
+    if (matchmakingQueue.size < 2) return;
+
+    const tickets = Array.from(matchmakingQueue.values());
+    for (let i = 0; i < tickets.length; i++) {
+      const ticketA = tickets[i];
+      if (!matchmakingQueue.has(ticketA.peerId)) continue;
+      if (ticketA.ws.readyState !== WebSocket.OPEN) {
+        matchmakingQueue.delete(ticketA.peerId);
+        continue;
+      }
+
+      for (let j = i + 1; j < tickets.length; j++) {
+        const ticketB = tickets[j];
+        if (!matchmakingQueue.has(ticketB.peerId)) continue;
+        if (ticketB.ws.readyState !== WebSocket.OPEN) {
+          matchmakingQueue.delete(ticketB.peerId);
+          continue;
+        }
+
+        // Check console system compatibility
+        const systemMatch =
+          ticketA.consoleSystem === "ANY" ||
+          ticketB.consoleSystem === "ANY" ||
+          ticketA.consoleSystem === ticketB.consoleSystem;
+
+        if (!systemMatch) continue;
+
+        // Check supported games compatibility
+        const aHasAnyGame =
+          ticketA.supportedGames.length === 0 || ticketA.supportedGames.includes("ANY");
+        const bHasAnyGame =
+          ticketB.supportedGames.length === 0 || ticketB.supportedGames.includes("ANY");
+
+        let matchedGameId = "nes-netplay-arena-2p";
+        let matchedGameTitle = "Retro 2P Combat Arena (NES)";
+        let matchedSystem = "NES";
+
+        let gamesCompatible = false;
+        if (aHasAnyGame && bHasAnyGame) {
+          gamesCompatible = true;
+          const chosenSys =
+            ticketA.consoleSystem !== "ANY"
+              ? ticketA.consoleSystem
+              : ticketB.consoleSystem !== "ANY"
+              ? ticketB.consoleSystem
+              : "NES";
+          const fallback = SYSTEM_DEFAULT_GAMES[chosenSys] || SYSTEM_DEFAULT_GAMES.NES;
+          matchedGameId = fallback.id;
+          matchedGameTitle = fallback.title;
+          matchedSystem = fallback.system;
+        } else if (aHasAnyGame && !bHasAnyGame) {
+          gamesCompatible = true;
+          matchedGameId = ticketB.supportedGames[0];
+          matchedSystem = ticketB.consoleSystem !== "ANY" ? ticketB.consoleSystem : "NES";
+          matchedGameTitle = `Netplay Duel (${matchedSystem})`;
+        } else if (!aHasAnyGame && bHasAnyGame) {
+          gamesCompatible = true;
+          matchedGameId = ticketA.supportedGames[0];
+          matchedSystem = ticketA.consoleSystem !== "ANY" ? ticketA.consoleSystem : "NES";
+          matchedGameTitle = `Netplay Duel (${matchedSystem})`;
+        } else {
+          // Both have specific game lists - check intersection
+          const intersection = ticketA.supportedGames.filter((g) =>
+            ticketB.supportedGames.includes(g)
+          );
+          if (intersection.length > 0) {
+            gamesCompatible = true;
+            matchedGameId = intersection[0];
+            matchedSystem = ticketA.consoleSystem !== "ANY" ? ticketA.consoleSystem : "NES";
+            matchedGameTitle = `Netplay Duel (${matchedSystem})`;
+          }
+        }
+
+        if (!gamesCompatible) continue;
+
+        // Both players are compatible! Create a Match Room!
+        matchmakingQueue.delete(ticketA.peerId);
+        matchmakingQueue.delete(ticketB.peerId);
+
+        const matchRoomId = "MATCH_" + Math.random().toString(36).substring(2, 7).toUpperCase();
+        const mode =
+          ticketA.netplayMode === "lockstep" && ticketB.netplayMode === "lockstep"
+            ? "lockstep"
+            : "rollback";
+
+        const newRoom: Room = {
+          id: matchRoomId,
+          name: `Quick Match: ${ticketA.username} vs ${ticketB.username}`,
+          hostId: ticketA.peerId,
+          gameTitle: matchedGameTitle,
+          gameId: matchedGameId,
+          system: matchedSystem,
+          netplayMode: mode,
+          frameDelay: 2,
+          isPrivate: false,
+          participants: new Map(),
+          createdAt: Date.now(),
+        };
+
+        const participantA: RoomParticipant = {
+          ws: ticketA.ws,
+          peerId: ticketA.peerId,
+          username: ticketA.username,
+          role: "player1",
+          isReady: true,
+          ping: 0,
+        };
+
+        const participantB: RoomParticipant = {
+          ws: ticketB.ws,
+          peerId: ticketB.peerId,
+          username: ticketB.username,
+          role: "player2",
+          isReady: true,
+          ping: 0,
+        };
+
+        newRoom.participants.set(ticketA.peerId, participantA);
+        newRoom.participants.set(ticketB.peerId, participantB);
+        rooms.set(matchRoomId, newRoom);
+
+        // Notify Player 1 (Host)
+        ticketA.ws.send(
+          JSON.stringify({
+            type: "match-found",
+            roomId: matchRoomId,
+            peerId: ticketA.peerId,
+            role: "player1",
+            opponentName: ticketB.username,
+            gameId: matchedGameId,
+            gameTitle: matchedGameTitle,
+            system: matchedSystem,
+            netplayMode: mode,
+            room: sanitizeRoom(newRoom),
+          })
+        );
+
+        // Notify Player 2 (Challenger)
+        ticketB.ws.send(
+          JSON.stringify({
+            type: "match-found",
+            roomId: matchRoomId,
+            peerId: ticketB.peerId,
+            role: "player2",
+            opponentName: ticketA.username,
+            gameId: matchedGameId,
+            gameTitle: matchedGameTitle,
+            system: matchedSystem,
+            netplayMode: mode,
+            room: sanitizeRoom(newRoom),
+          })
+        );
+
+        console.log(
+          `[Matchmaking] Successfully paired ${ticketA.username} (P1) and ${ticketB.username} (P2) into ${matchRoomId} for ${matchedGameTitle}`
+        );
+        break; // Continue scanning remaining queue
+      }
+    }
+  }
+
+  // Periodic Matchmaking Queue Scanner
+  setInterval(tryMatchmaking, 1000);
+
+  // WebSocket Server for WebRTC Signaling, Matchmaking & Room Management
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (request, socket, head) => {
+    try {
+      const url = new URL(request.url || "", `http://${request.headers.host || "localhost"}`);
+      if (url.pathname === "/ws" || url.pathname === "/ws/") {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit("connection", ws, request);
+        });
+      } else {
+        // If it's not a /ws request and Vite dev server is running, Vite might handle its own or ignore
+      }
+    } catch (err) {
+      console.error("WebSocket upgrade error:", err);
+      socket.destroy();
+    }
+  });
+
+  wss.on("connection", (ws: WebSocket) => {
+    let currentRoomId: string | null = null;
+    let currentPeerId: string | null = null;
+    let isMatchmaking = false;
+
+    ws.on("message", (rawMessage: string) => {
+      try {
+        const data = JSON.parse(rawMessage.toString());
+        const { type, roomId, peerId } = data;
+
+        switch (type) {
+          case "start-matchmaking": {
+            const { consoleSystem, supportedGames, netplayMode, username } = data;
+            const myPeerId = peerId || "peer_" + Math.random().toString(36).substring(2, 9);
+            currentPeerId = myPeerId;
+            isMatchmaking = true;
+
+            const ticket: MatchmakingTicket = {
+              ticketId: "ticket_" + Math.random().toString(36).substring(2, 9),
+              peerId: myPeerId,
+              ws,
+              username: username || "Player",
+              consoleSystem: consoleSystem || "ANY",
+              supportedGames: Array.isArray(supportedGames) ? supportedGames : ["ANY"],
+              netplayMode: netplayMode || "rollback",
+              joinedAt: Date.now(),
+            };
+
+            matchmakingQueue.set(myPeerId, ticket);
+
+            ws.send(
+              JSON.stringify({
+                type: "matchmaking-status",
+                status: "searching",
+                queueLength: matchmakingQueue.size,
+                consoleSystem: ticket.consoleSystem,
+                supportedGames: ticket.supportedGames,
+              })
+            );
+
+            // Trigger immediate matchmaking attempt
+            tryMatchmaking();
+            break;
+          }
+
+          case "cancel-matchmaking": {
+            if (currentPeerId) {
+              matchmakingQueue.delete(currentPeerId);
+            }
+            isMatchmaking = false;
+            ws.send(
+              JSON.stringify({
+                type: "matchmaking-status",
+                status: "idle",
+              })
+            );
+            break;
+          }
+
+          case "create-room": {
+            const {
+              roomName,
+              gameTitle,
+              gameId,
+              system,
+              netplayMode,
+              frameDelay,
+              username,
+              isPrivate,
+              supportedGames,
+            } = data;
+            const newRoomId = (
+              roomId || Math.random().toString(36).substring(2, 8).toUpperCase()
+            ).trim();
+            const newPeerId = peerId || "peer_" + Math.random().toString(36).substring(2, 9);
+            const inviteToken = "inv_" + Math.random().toString(36).substring(2, 10);
+
+            // Remove from matchmaking if they were searching
+            if (currentPeerId) matchmakingQueue.delete(currentPeerId);
+
+            const newRoom: Room = {
+              id: newRoomId,
+              name: roomName || `Room #${newRoomId}`,
+              hostId: newPeerId,
+              gameTitle: gameTitle || "Retro 2P Combat Arena (NES)",
+              gameId: gameId || "nes-netplay-arena-2p",
+              system: system || "NES",
+              netplayMode: netplayMode || "rollback",
+              frameDelay: frameDelay ?? 2,
+              isPrivate: Boolean(isPrivate),
+              inviteToken,
+              supportedGames: Array.isArray(supportedGames) ? supportedGames : [],
+              participants: new Map(),
+              createdAt: Date.now(),
+            };
+
+            const participant: RoomParticipant = {
+              ws,
+              peerId: newPeerId,
+              username: username || "Host",
+              role: "player1",
+              isReady: true,
+              ping: 0,
+            };
+            newRoom.participants.set(newPeerId, participant);
+            rooms.set(newRoomId, newRoom);
+
+            currentRoomId = newRoomId;
+            currentPeerId = newPeerId;
+
+            ws.send(
+              JSON.stringify({
+                type: "room-created",
+                roomId: newRoomId,
+                peerId: newPeerId,
+                role: "player1",
+                inviteToken,
+                room: sanitizeRoom(newRoom),
+              })
+            );
+            break;
+          }
+
+          case "join-room": {
+            const targetRoomId = (roomId || "").trim().toUpperCase();
+            const targetRoom = rooms.get(targetRoomId);
+            if (!targetRoom) {
+              ws.send(
+                JSON.stringify({ type: "error", message: `Room "${targetRoomId}" was not found or has expired.` })
+              );
+              return;
+            }
+
+            // Remove from matchmaking if they were searching
+            if (currentPeerId) matchmakingQueue.delete(currentPeerId);
+
+            const newPeerId = peerId || "peer_" + Math.random().toString(36).substring(2, 9);
+            const hasP1 = Array.from(targetRoom.participants.values()).some(
+              (p) => p.role === "player1"
+            );
+            const hasP2 = Array.from(targetRoom.participants.values()).some(
+              (p) => p.role === "player2"
+            );
+
+            let assignedRole: "player1" | "player2" | "spectator" = "spectator";
+            if (!hasP1) assignedRole = "player1";
+            else if (!hasP2) assignedRole = "player2";
+
+            const participant: RoomParticipant = {
+              ws,
+              peerId: newPeerId,
+              username:
+                data.username ||
+                (assignedRole === "player2" ? "Player 2" : `Guest ${newPeerId.slice(-4)}`),
+              role: assignedRole,
+              isReady: false,
+              ping: 0,
+            };
+            targetRoom.participants.set(newPeerId, participant);
+
+            currentRoomId = targetRoomId;
+            currentPeerId = newPeerId;
+
+            // Notify joining client
+            ws.send(
+              JSON.stringify({
+                type: "room-joined",
+                roomId: targetRoomId,
+                peerId: newPeerId,
+                role: assignedRole,
+                gameId: targetRoom.gameId,
+                gameTitle: targetRoom.gameTitle,
+                system: targetRoom.system,
+                room: sanitizeRoom(targetRoom),
+              })
+            );
+
+            // Broadcast to existing peers in room
+            broadcastToRoom(
+              targetRoom,
+              {
+                type: "peer-joined",
+                peerId: newPeerId,
+                username: participant.username,
+                role: assignedRole,
+                room: sanitizeRoom(targetRoom),
+              },
+              newPeerId
+            );
+            break;
+          }
+
+          case "update-role": {
+            if (!currentRoomId || !currentPeerId) return;
+            const room = rooms.get(currentRoomId);
+            if (!room) return;
+            const participant = room.participants.get(currentPeerId);
+            if (!participant) return;
+
+            const newRole = data.role as "player1" | "player2" | "spectator";
+            // Check if role is taken
+            if (newRole !== "spectator") {
+              const existing = Array.from(room.participants.values()).find(
+                (p) => p.role === newRole && p.peerId !== currentPeerId
+              );
+              if (existing) {
+                ws.send(
+                  JSON.stringify({
+                    type: "error",
+                    message: `Slot ${newRole} is currently occupied.`,
+                  })
+                );
+                return;
+              }
+            }
+
+            participant.role = newRole;
+            broadcastToRoom(room, {
+              type: "room-updated",
+              room: sanitizeRoom(room),
+            });
+            break;
+          }
+
+          case "update-game": {
+            if (!currentRoomId) return;
+            const room = rooms.get(currentRoomId);
+            if (!room) return;
+            room.gameTitle = data.gameTitle || room.gameTitle;
+            room.gameId = data.gameId || room.gameId;
+            room.system = data.system || room.system;
+            room.romHash = data.romHash;
+            room.romSize = data.romSize;
+            room.netplayMode = data.netplayMode || room.netplayMode;
+            room.frameDelay = data.frameDelay ?? room.frameDelay;
+
+            broadcastToRoom(room, {
+              type: "game-updated",
+              gameTitle: room.gameTitle,
+              gameId: room.gameId,
+              system: room.system,
+              romHash: room.romHash,
+              romSize: room.romSize,
+              netplayMode: room.netplayMode,
+              frameDelay: room.frameDelay,
+              room: sanitizeRoom(room),
+            });
+            break;
+          }
+
+          case "toggle-ready": {
+            if (!currentRoomId || !currentPeerId) return;
+            const room = rooms.get(currentRoomId);
+            if (!room) return;
+            const participant = room.participants.get(currentPeerId);
+            if (!participant) return;
+
+            participant.isReady = !participant.isReady;
+            broadcastToRoom(room, {
+              type: "room-updated",
+              room: sanitizeRoom(room),
+            });
+            break;
+          }
+
+          // WebRTC Signaling: Forward SDP offer, answer, and ICE candidates
+          case "signal-offer":
+          case "signal-answer":
+          case "signal-ice":
+          case "av-offer":
+          case "av-answer":
+          case "av-ice": {
+            if (!currentRoomId) return;
+            const room = rooms.get(currentRoomId);
+            if (!room) return;
+
+            const targetPeerId = data.targetPeerId;
+            if (targetPeerId) {
+              const target = room.participants.get(targetPeerId);
+              if (target && target.ws.readyState === WebSocket.OPEN) {
+                target.ws.send(
+                  JSON.stringify({
+                    type: data.type,
+                    senderPeerId: currentPeerId,
+                    payload: data.payload,
+                  })
+                );
+              }
+            } else {
+              broadcastToRoom(
+                room,
+                {
+                  type: data.type,
+                  senderPeerId: currentPeerId,
+                  payload: data.payload,
+                },
+                currentPeerId || undefined
+              );
+            }
+            break;
+          }
+
+          // Fallback Relay Channel & Sync Protocol
+          case "netplay-input-relay":
+          case "netplay-sync-state":
+          case "netplay-desync-alert":
+          case "game-sync-step":
+          case "game-sync-ack":
+          case "chat-message": {
+            if (!currentRoomId) return;
+            const room = rooms.get(currentRoomId);
+            if (!room) return;
+
+            broadcastToRoom(
+              room,
+              {
+                ...data,
+                senderPeerId: currentPeerId,
+              },
+              currentPeerId || undefined
+            );
+            break;
+          }
+
+          case "ping": {
+            ws.send(
+              JSON.stringify({
+                type: "pong",
+                clientTimestamp: data.clientTimestamp,
+                serverTimestamp: Date.now(),
+              })
+            );
+            break;
+          }
+
+          default:
+            break;
+        }
+      } catch (err) {
+        console.error("Error processing websocket message:", err);
+      }
+    });
+
+    ws.on("close", () => {
+      if (currentPeerId) {
+        matchmakingQueue.delete(currentPeerId);
+      }
+
+      if (currentRoomId && currentPeerId) {
+        const room = rooms.get(currentRoomId);
+        if (room) {
+          room.participants.delete(currentPeerId);
+          if (room.participants.size === 0) {
+            rooms.delete(currentRoomId);
+          } else {
+            // If host left, reassign host
+            if (room.hostId === currentPeerId) {
+              const nextHost = Array.from(room.participants.values())[0];
+              room.hostId = nextHost.peerId;
+            }
+            broadcastToRoom(room, {
+              type: "peer-left",
+              peerId: currentPeerId,
+              room: sanitizeRoom(room),
+            });
+          }
+        }
+      }
+    });
+  });
+
+  function broadcastToRoom(room: Room, message: Record<string, unknown>, excludePeerId?: string) {
+    const payload = JSON.stringify(message);
+    for (const [peerId, participant] of room.participants.entries()) {
+      if (excludePeerId && peerId === excludePeerId) continue;
+      if (participant.ws.readyState === WebSocket.OPEN) {
+        participant.ws.send(payload);
+      }
+    }
+  }
+
+  function sanitizeRoom(room: Room) {
+    return {
+      id: room.id,
+      name: room.name,
+      hostId: room.hostId,
+      gameTitle: room.gameTitle,
+      gameId: room.gameId,
+      system: room.system,
+      romHash: room.romHash,
+      romSize: room.romSize,
+      netplayMode: room.netplayMode,
+      frameDelay: room.frameDelay,
+      isPrivate: room.isPrivate,
+      inviteToken: room.inviteToken,
+      supportedGames: room.supportedGames,
+      participants: Array.from(room.participants.values()).map((p) => ({
+        peerId: p.peerId,
+        username: p.username,
+        role: p.role,
+        isReady: p.isReady,
+        ping: p.ping,
+      })),
+      createdAt: room.createdAt,
+    };
+  }
+
+  // Vite middleware setup
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
+
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server and WebRTC signaling running on http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer();

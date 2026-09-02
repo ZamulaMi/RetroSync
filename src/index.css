@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* Retro Screen Filters & Shaders */
+.image-rendering-pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.image-rendering-auto {
+  image-rendering: auto;
+}
+
+.crt-scanlines-effect {
+  image-rendering: pixelated;
+  filter: contrast(1.15) brightness(1.05) saturate(1.1);
+}
+
+.lcd-grid-effect {
+  image-rendering: pixelated;
+  filter: contrast(1.1) brightness(0.95);
+}
+
+.gameboy-green-effect {
+  image-rendering: pixelated;
+  filter: sepia(100%) hue-rotate(50deg) saturate(2.5) contrast(1.2);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes scaleUp {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-scale-up {
+  animation: scaleUp 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
