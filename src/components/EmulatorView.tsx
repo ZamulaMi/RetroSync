@@ -15,6 +15,7 @@ import {
 import { UniversalEmulator } from "../emulator/emulatorManager";
 import { NetplayController } from "../netplay/netplayController";
 import { ConsoleSystem, ScreenFilter } from "../types";
+import { TouchGamepad } from "./TouchGamepad";
 
 interface EmulatorViewProps {
   controller: NetplayController;
@@ -40,7 +41,16 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isAudioStarted, setIsAudioStarted] = useState(false);
   const [speed, setSpeed] = useState<number>(1.0);
-  const [showTouchControls, setShowTouchControls] = useState<boolean>(false);
+  const [showTouchControls, setShowTouchControls] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return (
+        "ontouchstart" in window ||
+        (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+        window.innerWidth < 1024
+      );
+    }
+    return false;
+  });
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -155,11 +165,6 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
     }
   };
 
-  // Touch Controller Handlers
-  const handleTouch = (button: keyof typeof controller.touchState, isPressed: boolean) => {
-    controller.touchState[button] = isPressed;
-  };
-
   const getCanvasDimensions = () => {
     if (system === "GB" || system === "GBC") {
       return { width: 160, height: 144 };
@@ -170,18 +175,20 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
   const dims = getCanvasDimensions();
 
   return (
-    <div className="relative flex flex-col items-center justify-center w-full h-full bg-slate-950 p-2 sm:p-4 rounded-xl border border-slate-800/80 shadow-2xl overflow-hidden">
+    <div className="relative flex flex-col items-center justify-center w-full h-full bg-slate-950 p-2 sm:p-4 rounded-xl border border-slate-800/80 shadow-2xl overflow-hidden select-none">
       {/* Screen Container */}
       <div
         id="emulator-screen-wrapper"
-        className={`relative ${getAspectRatioClass()} bg-black flex items-center justify-center overflow-hidden transition-all duration-200 mx-auto rounded-md`}
+        className={`relative ${getAspectRatioClass()} bg-black flex items-center justify-center overflow-hidden transition-all duration-200 mx-auto rounded-md touch-none select-none`}
+        style={{ touchAction: "none" }}
       >
         <canvas
           id="emulator-canvas"
           ref={canvasRef}
           width={dims.width}
           height={dims.height}
-          className={`${getCanvasObjectFit()} ${getFilterStyle()} block`}
+          className={`${getCanvasObjectFit()} ${getFilterStyle()} block touch-none`}
+          style={{ touchAction: "none" }}
           tabIndex={0}
         />
 
@@ -485,104 +492,27 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
         <button
           id="touch-controls-toggle-btn"
           onClick={() => setShowTouchControls(!showTouchControls)}
-          className={`p-1.5 rounded-lg border text-xs flex items-center gap-1 ${
+          className={`p-1.5 rounded-lg border text-xs flex items-center gap-1.5 cursor-pointer font-medium transition-colors ${
             showTouchControls
-              ? "bg-indigo-600 text-white border-indigo-400"
+              ? "bg-indigo-600 text-white border-indigo-400 shadow-sm"
               : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200"
           }`}
-          title="Toggle On-Screen Touch Gamepad"
+          title="Увімкнути/Вимкнути Сенсорний Пад"
         >
           <Gamepad className="w-4 h-4" />
-          <span className="hidden sm:inline">Touch Pad</span>
+          <span>{showTouchControls ? "Сховати Touch Pad" : "Touch Pad"}</span>
         </button>
       </div>
 
-      {/* On-Screen Virtual Touch Gamepad (for mobile/tablet touch users) */}
+      {/* On-Screen Dedicated Touch Gamepad (Positioned directly under the screen) */}
       {showTouchControls && (
-        <div
-          id="virtual-gamepad-overlay"
-          className="w-full mt-4 p-4 bg-slate-900/90 border border-slate-800 rounded-xl grid grid-cols-2 gap-6 select-none"
-        >
-          {/* Virtual D-Pad */}
-          <div className="flex flex-col items-center justify-center">
-            <div className="relative w-36 h-36">
-              {/* Up */}
-              <button
-                onPointerDown={() => handleTouch("up", true)}
-                onPointerUp={() => handleTouch("up", false)}
-                className="absolute top-0 left-12 w-12 h-12 bg-slate-800 active:bg-indigo-600 rounded-t-lg border border-slate-700 flex items-center justify-center font-bold text-slate-300 text-sm shadow"
-              >
-                ▲
-              </button>
-              {/* Left */}
-              <button
-                onPointerDown={() => handleTouch("left", true)}
-                onPointerUp={() => handleTouch("left", false)}
-                className="absolute top-12 left-0 w-12 h-12 bg-slate-800 active:bg-indigo-600 rounded-l-lg border border-slate-700 flex items-center justify-center font-bold text-slate-300 text-sm shadow"
-              >
-                ◀
-              </button>
-              {/* Center deadzone */}
-              <div className="absolute top-12 left-12 w-12 h-12 bg-slate-850 border-slate-700" />
-              {/* Right */}
-              <button
-                onPointerDown={() => handleTouch("right", true)}
-                onPointerUp={() => handleTouch("right", false)}
-                className="absolute top-12 right-0 w-12 h-12 bg-slate-800 active:bg-indigo-600 rounded-r-lg border border-slate-700 flex items-center justify-center font-bold text-slate-300 text-sm shadow"
-              >
-                ▶
-              </button>
-              {/* Down */}
-              <button
-                onPointerDown={() => handleTouch("down", true)}
-                onPointerUp={() => handleTouch("down", false)}
-                className="absolute bottom-0 left-12 w-12 h-12 bg-slate-800 active:bg-indigo-600 rounded-b-lg border border-slate-700 flex items-center justify-center font-bold text-slate-300 text-sm shadow"
-              >
-                ▼
-              </button>
-            </div>
-            <span className="text-[10px] text-slate-500 mt-1 uppercase font-semibold">D-Pad</span>
-          </div>
-
-          {/* Action Buttons: A, B, Turbo & Select/Start */}
-          <div className="flex flex-col items-center justify-between">
-            <div className="flex items-center gap-4 mt-2">
-              {/* B Button */}
-              <button
-                onPointerDown={() => handleTouch("b", true)}
-                onPointerUp={() => handleTouch("b", false)}
-                className="w-14 h-14 bg-rose-600 active:bg-rose-500 rounded-full border-2 border-rose-400/80 text-white font-bold text-base shadow-lg flex items-center justify-center cursor-pointer"
-              >
-                B
-              </button>
-              {/* A Button */}
-              <button
-                onPointerDown={() => handleTouch("a", true)}
-                onPointerUp={() => handleTouch("a", false)}
-                className="w-14 h-14 bg-emerald-600 active:bg-emerald-500 rounded-full border-2 border-emerald-400/80 text-white font-bold text-base shadow-lg flex items-center justify-center cursor-pointer"
-              >
-                A
-              </button>
-            </div>
-
-            {/* Select & Start */}
-            <div className="flex items-center gap-3 mt-4">
-              <button
-                onPointerDown={() => handleTouch("select", true)}
-                onPointerUp={() => handleTouch("select", false)}
-                className="px-3 py-1.5 bg-slate-800 active:bg-slate-700 border border-slate-700 rounded-full text-slate-300 text-xs font-semibold"
-              >
-                SELECT
-              </button>
-              <button
-                onPointerDown={() => handleTouch("start", true)}
-                onPointerUp={() => handleTouch("start", false)}
-                className="px-4 py-1.5 bg-slate-800 active:bg-slate-700 border border-slate-700 rounded-full text-slate-300 text-xs font-semibold text-emerald-400"
-              >
-                START
-              </button>
-            </div>
-          </div>
+        <div className="w-full mt-3">
+          <TouchGamepad
+            controller={controller}
+            system={system}
+            onOpenMenu={onOpenMenu}
+            onReset={handleReset}
+          />
         </div>
       )}
     </div>

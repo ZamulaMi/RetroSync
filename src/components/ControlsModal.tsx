@@ -122,7 +122,7 @@ export const ControlsModal: React.FC<ControlsModalProps> = ({
           </span>
         </div>
 
-        {/* Player Tabs */}
+        {/* Player Tabs & Touch Tab */}
         <div className="flex border-b border-slate-800 bg-slate-950/30">
           <button
             onClick={() => {
@@ -135,7 +135,7 @@ export const ControlsModal: React.FC<ControlsModalProps> = ({
                 : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            Player 1 (WASD + Z/X або J/K)
+            Player 1 (Клавіатура)
           </button>
           <button
             onClick={() => {
@@ -148,8 +148,13 @@ export const ControlsModal: React.FC<ControlsModalProps> = ({
                 : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            Player 2 (Arrows + Numpad 1/2)
+            Player 2 (Клавіатура)
           </button>
+        </div>
+
+        {/* Touchscreen Notice */}
+        <div className="px-4 py-2 bg-indigo-950/40 border-b border-indigo-900/40 text-[11px] text-indigo-300 flex items-center justify-between">
+          <span>📱 Сенсорний Touch Pad розташовано безпосередньо під екраном з 360° стіком, мультитачем та блокуванням прокручування.</span>
         </div>
 
         {/* Remap Key List */}

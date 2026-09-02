@@ -55,3 +55,15 @@
   animation: scaleUp 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Touch screen optimization and scroll prevention */
+#touch-gamepad-container,
+#touch-movement-surface,
+#emulator-screen-wrapper,
+#emulator-canvas {
+  touch-action: none !important;
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  overscroll-behavior: none;
+}
+
