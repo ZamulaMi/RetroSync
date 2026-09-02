@@ -125,14 +125,15 @@ export default function App() {
     // Load initial 2-player demo ROM
     controller.emulator.loadDemoRom("nes-netplay-arena-2p");
 
-    // Check URL parameters for direct room join: ?room=XYZ
+    // Check URL parameters for direct room join: ?code=XYZ, ?num=12345, or ?room=XYZ
     const urlParams = new URLSearchParams(window.location.search);
-    const roomParam = urlParams.get("room");
-    if (roomParam) {
+    const joinTarget =
+      urlParams.get("code") || urlParams.get("num") || urlParams.get("room");
+    if (joinTarget) {
       setGamePlayMode("online");
       controller.gamePlayMode = "online";
       setTimeout(() => {
-        controller.joinRoom(roomParam);
+        controller.joinRoom(joinTarget);
       }, 500);
     }
 

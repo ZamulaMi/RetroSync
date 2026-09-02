@@ -26,14 +26,24 @@ export class WebRTCNetplayPeer {
   private pingTimestamps: Map<number, number> = new Map();
   private pingSequence: number = 0;
 
-  // ICE Servers (Google STUN)
+  // Multi-STUN Redundancy across ports 19302, 3478, and 443 for Mobile Cellular Networks (3G/4G/5G)
   private iceServers: RTCConfiguration = {
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
       { urls: "stun:stun2.l.google.com:19302" },
+      { urls: "stun:stun3.l.google.com:19302" },
+      { urls: "stun:stun4.l.google.com:19302" },
+      { urls: "stun:stun.cloudflare.com:3478" },
+      { urls: "stun:global.stun.twilio.com:3478" },
+      { urls: "stun:stun.services.mozilla.com:3478" },
+      { urls: "stun:stun.nextcloud.com:443" },
+      { urls: "stun:stun.sipgate.net:3478" },
     ],
+    iceCandidatePoolSize: 10,
   };
+
+  private pendingCandidates: RTCIceCandidateInit[] = [];
 
   constructor(signaling: SignalingClient) {
     this.signaling = signaling;
@@ -109,6 +119,8 @@ export class WebRTCNetplayPeer {
     };
 
     await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
+    await this.drainPendingCandidates();
+
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
 
@@ -122,15 +134,33 @@ export class WebRTCNetplayPeer {
   private async handleAnswer(answer: RTCSessionDescriptionInit) {
     if (this.pc && this.pc.signalingState !== "closed") {
       await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
+      await this.drainPendingCandidates();
     }
   }
 
   private async handleCandidate(candidate: RTCIceCandidateInit) {
-    if (this.pc && this.pc.remoteDescription && candidate) {
+    if (this.pc && this.pc.remoteDescription && this.pc.remoteDescription.type) {
       try {
         await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
         console.warn("Error adding ICE candidate:", err);
+      }
+    } else {
+      // Buffer candidates on mobile networks if received before remote description
+      this.pendingCandidates.push(candidate);
+    }
+  }
+
+  private async drainPendingCandidates() {
+    if (!this.pc || !this.pc.remoteDescription) return;
+    while (this.pendingCandidates.length > 0) {
+      const c = this.pendingCandidates.shift();
+      if (c) {
+        try {
+          await this.pc.addIceCandidate(new RTCIceCandidate(c));
+        } catch (err) {
+          console.warn("Error applying buffered ICE candidate:", err);
+        }
       }
     }
   }

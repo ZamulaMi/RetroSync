@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Users,
   Plus,
@@ -22,6 +22,11 @@ import {
   LogOut,
   RefreshCw,
   Sparkles,
+  KeyRound,
+  Hash,
+  Signal,
+  Smartphone,
+  ExternalLink,
 } from "lucide-react";
 import {
   ChatMessage,
@@ -33,9 +38,13 @@ import {
   RoomInfo,
 } from "../types";
 import { DEMO_ROMS } from "../emulator/demoRoms";
+import { JoinByCodeModal } from "./JoinByCodeModal";
+import { JoinByNumberModal } from "./JoinByNumberModal";
 
 interface PublicRoomItem {
-  id: string;
+  id: string; // 4-char code
+  code?: string;
+  roomNumber?: string; // 5-digit number
   name: string;
   hostId: string;
   gameTitle: string;
@@ -102,6 +111,20 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
   const [selectedHostGameId, setSelectedHostGameId] = useState<string>("nes-netplay-arena-2p");
   const [chatInput, setChatInput] = useState("");
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedNumber, setCopiedNumber] = useState(false);
+
+  // Modals for entering 4-char code and 5-digit number in separate windows
+  const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
+  const [isNumberModalOpen, setIsNumberModalOpen] = useState(false);
+
+  // Global Search state
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [browserFilterSystem, setBrowserFilterSystem] = useState<string>("ALL");
+
+  // Inline Quick Input states for Tab 3
+  const [inlineCode, setInlineCode] = useState("");
+  const [inlineNumber, setInlineNumber] = useState("");
 
   // Matchmaking form state
   const [mmSystem, setMmSystem] = useState<ConsoleSystem | "ANY">("ANY");
@@ -128,11 +151,14 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
     };
   }, [matchmakingStatus]);
 
-  // Fetch public rooms
-  const fetchPublicRooms = async () => {
+  // Fetch public rooms with optional search query
+  const fetchPublicRooms = async (query = globalSearchQuery) => {
     try {
       setIsLoadingRooms(true);
-      const res = await fetch("/api/rooms");
+      const url = query.trim()
+        ? `/api/rooms?q=${encodeURIComponent(query.trim())}`
+        : "/api/rooms";
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setPublicRooms(data);
@@ -146,16 +172,30 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
 
   useEffect(() => {
     if (activeTab === "browser" && !room) {
-      fetchPublicRooms();
+      fetchPublicRooms(globalSearchQuery);
     }
-  }, [activeTab, room]);
+  }, [activeTab, room, globalSearchQuery]);
 
   const handleCopyShareLink = () => {
     if (!room) return;
-    const url = `${window.location.origin}?room=${room.id}&token=${room.inviteToken || ""}`;
+    const url = `${window.location.origin}?code=${room.id}&num=${room.roomNumber || ""}&token=${room.inviteToken || ""}`;
     navigator.clipboard.writeText(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  const handleCopyCode = () => {
+    if (!room) return;
+    navigator.clipboard.writeText(room.id);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const handleCopyNumber = () => {
+    if (!room || !room.roomNumber) return;
+    navigator.clipboard.writeText(room.roomNumber);
+    setCopiedNumber(true);
+    setTimeout(() => setCopiedNumber(false), 2000);
   };
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -289,9 +329,9 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                   : "text-slate-400 hover:text-white"
               }`}
             >
-              <LogIn className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Join Code</span>
-              <span className="sm:hidden">Join</span>
+              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Вхід (Код/Номер)</span>
+              <span className="sm:hidden">Вхід</span>
             </button>
 
             <button
@@ -303,9 +343,9 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                   : "text-slate-400 hover:text-white"
               }`}
             >
-              <Globe className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Browse</span>
-              <span className="sm:hidden">List</span>
+              <Globe className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Глобальний пошук</span>
+              <span className="sm:hidden">Пошук</span>
             </button>
           </div>
 
@@ -563,115 +603,332 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
             </div>
           )}
 
-          {/* TAB 3: JOIN VIA CODE / LINK */}
+          {/* TAB 3: JOIN VIA 4-CHAR CODE OR 5-DIGIT NUMBER IN SEPARATE WINDOWS */}
           {activeTab === "join" && (
             <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-4">
-              <div>
-                <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <LogIn className="w-4 h-4 text-indigo-400" /> Join via Room Code or Link
-                </h3>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Paste an invitation link or enter the 6-character room code.
-                </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <LogIn className="w-4 h-4 text-indigo-400" /> Вхід до кімнати гри
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Код 4 знака або номер 5 цифр у окремих вікнах
+                  </p>
+                </div>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                  <Smartphone className="w-3 h-3" /> Мобільна мережа
+                </span>
               </div>
 
-              <div className="space-y-3">
-                <input
-                  id="join-room-code-input"
-                  type="text"
-                  placeholder="e.g. 7K2M9X or MATCH_4F9"
-                  value={joinCode}
-                  onChange={(e) => {
-                    let val = e.target.value.trim();
-                    // If full URL was pasted, parse room query parameter
-                    if (val.includes("?room=") || val.includes("&room=")) {
-                      try {
-                        const parsed = new URL(val);
-                        const r = parsed.searchParams.get("room");
-                        if (r) val = r;
-                      } catch {
-                        const match = val.match(/room=([a-zA-Z0-9_-]+)/);
-                        if (match) val = match[1];
-                      }
-                    }
-                    setJoinCode(val.toUpperCase());
-                  }}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-center text-sm font-mono tracking-widest uppercase text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-bold"
-                />
+              {/* TWO SEPARATE WINDOW OPTIONS */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* OPTION 1: SEPARATE WINDOW FOR 4-CHAR CODE */}
+                <div className="p-3.5 rounded-xl bg-gradient-to-b from-indigo-950/40 to-slate-900 border border-indigo-500/40 flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5 text-indigo-400" /> Вікно 1: Код кімнати
+                      </span>
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-indigo-500/30 text-indigo-200 border border-indigo-400/40">
+                        4 знаки
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Літерно-цифровий код для підключення до гри з комп'ютера чи телефона.
+                    </p>
+                  </div>
 
-                <button
-                  id="join-room-btn"
-                  disabled={!joinCode.trim()}
-                  onClick={() => onJoinRoom(joinCode)}
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-900/30 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-98"
-                >
-                  <LogIn className="w-4 h-4" /> Connect to Room
-                </button>
+                  {/* Inline quick 4-character boxes */}
+                  <div className="space-y-2">
+                    <button
+                      id="open-code-modal-btn"
+                      type="button"
+                      onClick={() => setIsCodeModalOpen(true)}
+                      className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-900/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Відкрити вікно коду
+                    </button>
+
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <input
+                        id="quick-inline-code-input"
+                        type="text"
+                        maxLength={4}
+                        placeholder="XXXX"
+                        value={inlineCode}
+                        onChange={(e) => setInlineCode(e.target.value.toUpperCase().slice(0, 4))}
+                        className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-center text-xs font-mono font-bold tracking-widest uppercase text-white focus:outline-none focus:border-indigo-400"
+                      />
+                      <button
+                        id="quick-join-code-btn"
+                        type="button"
+                        disabled={inlineCode.trim().length !== 4}
+                        onClick={() => onJoinRoom(inlineCode.trim())}
+                        className="py-1.5 px-3 bg-indigo-700 hover:bg-indigo-600 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg text-xs font-bold cursor-pointer"
+                      >
+                        Вхід
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* OPTION 2: SEPARATE WINDOW FOR 5-DIGIT NUMBER */}
+                <div className="p-3.5 rounded-xl bg-gradient-to-b from-emerald-950/40 to-slate-900 border border-emerald-500/40 flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                        <Hash className="w-3.5 h-3.5 text-emerald-400" /> Вікно 2: Номер кімнати
+                      </span>
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-200 border border-emerald-400/40">
+                        5 цифр
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Зручний числовий номер кімнати (наприклад: 48201) для швидкого набору на клавіатурі.
+                    </p>
+                  </div>
+
+                  {/* Inline quick 5-digit boxes */}
+                  <div className="space-y-2">
+                    <button
+                      id="open-number-modal-btn"
+                      type="button"
+                      onClick={() => setIsNumberModalOpen(true)}
+                      className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-900/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Відкрити вікно номера
+                    </button>
+
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <input
+                        id="quick-inline-number-input"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={5}
+                        placeholder="12345"
+                        value={inlineNumber}
+                        onChange={(e) => setInlineNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 5))}
+                        className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-center text-xs font-mono font-bold tracking-widest text-emerald-300 focus:outline-none focus:border-emerald-400"
+                      />
+                      <button
+                        id="quick-join-number-btn"
+                        type="button"
+                        disabled={inlineNumber.trim().length !== 5}
+                        onClick={() => onJoinRoom(inlineNumber.trim())}
+                        className="py-1.5 px-3 bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg text-xs font-bold cursor-pointer"
+                      >
+                        Вхід
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* UNIVERSAL INVITATION LINK OR KEY INPUT */}
+              <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                <span className="text-[11px] text-slate-400 font-medium block">
+                  Або вставте повне посилання запрошення чи будь-який ідентифікатор:
+                </span>
+                <div className="flex gap-2">
+                  <input
+                    id="join-room-code-input"
+                    type="text"
+                    placeholder="Вставте посилання або код / номер..."
+                    value={joinCode}
+                    onChange={(e) => {
+                      let val = e.target.value.trim();
+                      if (val.includes("?code=") || val.includes("&code=")) {
+                        const m = val.match(/code=([a-zA-Z0-9]+)/i);
+                        if (m) val = m[1];
+                      } else if (val.includes("?num=") || val.includes("&num=")) {
+                        const m = val.match(/num=([0-9]+)/i);
+                        if (m) val = m[1];
+                      } else if (val.includes("?room=") || val.includes("&room=")) {
+                        const m = val.match(/room=([a-zA-Z0-9_-]+)/i);
+                        if (m) val = m[1];
+                      }
+                      setJoinCode(val.toUpperCase());
+                    }}
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    id="join-room-btn"
+                    disabled={!joinCode.trim()}
+                    onClick={() => onJoinRoom(joinCode)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <LogIn className="w-3.5 h-3.5" /> Підключитися
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
-          {/* TAB 4: PUBLIC ROOMS BROWSER */}
+          {/* TAB 4: GLOBAL SEARCH & BROWSER WITH MOBILE NETWORK ACCESS */}
           {activeTab === "browser" && (
-            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <Globe className="w-4 h-4 text-emerald-400" /> Active Public Rooms
-                </h3>
-                <button
-                  onClick={fetchPublicRooms}
-                  disabled={isLoadingRooms}
-                  className="p-1 rounded text-slate-400 hover:text-white"
-                  title="Refresh List"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingRooms ? "animate-spin" : ""}`} />
-                </button>
+            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-3.5">
+              {/* Header with Mobile Access status */}
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Globe className="w-4 h-4 text-emerald-400" /> Глобальний пошук кімнат
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Пошук за 4-значним кодом, 5-значним номером, грою чи платформою
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                    <Signal className="w-3 h-3 text-emerald-400 animate-pulse" /> Мобільна мережа 4G/5G
+                  </span>
+                  <button
+                    onClick={() => fetchPublicRooms(globalSearchQuery)}
+                    disabled={isLoadingRooms}
+                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-colors"
+                    title="Оновити список"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingRooms ? "animate-spin" : ""}`} />
+                  </button>
+                </div>
               </div>
 
-              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                {publicRooms.length === 0 ? (
-                  <div className="p-4 text-center text-slate-500 text-xs">
-                    {isLoadingRooms ? "Loading rooms..." : "No public rooms active right now. Host one!"}
-                  </div>
-                ) : (
-                  publicRooms.map((pubRoom) => (
+              {/* Live Global Search Bar */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  id="global-rooms-search-input"
+                  type="text"
+                  placeholder="Глобальний пошук: введіть назву гри, консоль, 4 знаки коду або 5 цифр номера..."
+                  value={globalSearchQuery}
+                  onChange={(e) => {
+                    const q = e.target.value;
+                    setGlobalSearchQuery(q);
+                    fetchPublicRooms(q);
+                  }}
+                  className="w-full bg-slate-900 border border-slate-700/90 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
+                />
+                {globalSearchQuery && (
+                  <button
+                    onClick={() => {
+                      setGlobalSearchQuery("");
+                      fetchPublicRooms("");
+                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* System Filter Chips */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px]">
+                {["ALL", "NES", "SNES", "GBA", "GB", "GBC"].map((sys) => (
+                  <button
+                    key={sys}
+                    type="button"
+                    onClick={() => setBrowserFilterSystem(sys)}
+                    className={`px-2.5 py-0.5 rounded-lg font-semibold transition-all shrink-0 ${
+                      browserFilterSystem === sys
+                        ? "bg-indigo-600 text-white"
+                        : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800"
+                    }`}
+                  >
+                    {sys === "ALL" ? "Всі системи" : sys}
+                  </button>
+                ))}
+              </div>
+
+              {/* Mobile Network Connectivity Relay Note */}
+              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                <span className="flex items-center gap-1.5">
+                  <Smartphone className="w-3.5 h-3.5 text-indigo-400" />
+                  Прямий P2P WebRTC та високошвидкісний WSS-ретранслятор для гри через мобільний інтернет (CGNAT)
+                </span>
+                <span className="text-emerald-400 font-bold text-[10px]">АКТИВНИЙ</span>
+              </div>
+
+              {/* Public Rooms List */}
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {(() => {
+                  const filtered = publicRooms.filter((r) => {
+                    if (browserFilterSystem !== "ALL" && r.system !== browserFilterSystem) return false;
+                    return true;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="p-6 text-center text-slate-500 text-xs rounded-xl bg-slate-900/40 border border-slate-800/60 space-y-2">
+                        <Gamepad2 className="w-6 h-6 mx-auto text-slate-600 opacity-60" />
+                        <p>
+                          {isLoadingRooms
+                            ? "Пошук відкритих кімнат..."
+                            : globalSearchQuery
+                            ? `За запитом "${globalSearchQuery}" кімнат не знайдено`
+                            : "Зараз немає відкритих кімнат. Створіть власну!"}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((pubRoom) => (
                     <div
                       key={pubRoom.id}
-                      className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between gap-2"
+                      className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-indigo-500/40 flex items-center justify-between gap-3 transition-all"
                     >
-                      <div className="truncate">
-                        <span className="font-bold text-white text-xs block truncate">
-                          {pubRoom.name}
-                        </span>
-                        <span className="text-[10px] text-slate-400 block truncate">
-                          {pubRoom.gameTitle} ({pubRoom.system}) • {pubRoom.playerCount}/2 Players
-                        </span>
+                      <div className="truncate space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white text-xs truncate">
+                            {pubRoom.name}
+                          </span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300">
+                            {pubRoom.system}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-[10px] text-slate-400 flex-wrap">
+                          <span className="text-slate-300 font-medium">{pubRoom.gameTitle}</span>
+                          <span>•</span>
+                          <span className="font-mono bg-indigo-950/60 px-1.5 py-0.2 rounded text-indigo-300 border border-indigo-500/30">
+                            Код: {pubRoom.code || pubRoom.id}
+                          </span>
+                          {pubRoom.roomNumber && (
+                            <span className="font-mono bg-emerald-950/60 px-1.5 py-0.2 rounded text-emerald-300 border border-emerald-500/30">
+                              №: {pubRoom.roomNumber}
+                            </span>
+                          )}
+                          <span>•</span>
+                          <span className="text-amber-300 font-semibold">
+                            {pubRoom.playerCount}/2 гравців
+                          </span>
+                        </div>
                       </div>
 
                       <button
                         onClick={() => onJoinRoom(pubRoom.id)}
-                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 shrink-0"
+                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 shrink-0 shadow-md shadow-indigo-950 cursor-pointer"
                       >
-                        Join <ArrowRight className="w-3 h-3" />
+                        Вхід <ArrowRight className="w-3 h-3" />
                       </button>
                     </div>
-                  ))
-                )}
+                  ));
+                })()}
               </div>
             </div>
           )}
         </div>
       ) : (
-        /* ACTIVE ROOM VIEW: INVITATION LINK, PLAYER SLOTS & CHAT */
+        /* ACTIVE ROOM VIEW: 4-CHAR CODE, 5-DIGIT NUMBER, INVITATION LINK, PLAYER SLOTS & CHAT */
         <div className="space-y-4">
-          {/* Unique Invitation Link & Room Header */}
+          {/* Room Header with Dual 4-char Code and 5-digit Number Display */}
           <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-400">Room Code:</span>
-                <span className="font-mono text-sm font-black text-amber-400 tracking-wider">
-                  {room.id}
-                </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold text-slate-400">Кімната:</span>
+                <span className="font-bold text-white text-xs">{room.name}</span>
                 <span
                   className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
                     room.isPrivate
@@ -679,7 +936,10 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                       : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
                   }`}
                 >
-                  {room.isPrivate ? "Private Room" : "Public"}
+                  {room.isPrivate ? "Приватна кімната" : "Публічна"}
+                </span>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+                  <Smartphone className="w-3 h-3" /> Мобільна мережа 4G/5G
                 </span>
               </div>
 
@@ -689,18 +949,87 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                 onClick={onLeaveRoom}
                 className="px-2.5 py-1 text-slate-400 hover:text-rose-300 hover:bg-rose-950/40 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
               >
-                <LogOut className="w-3.5 h-3.5" /> Leave
+                <LogOut className="w-3.5 h-3.5" /> Вийти
               </button>
+            </div>
+
+            {/* DUAL IDENTIFIERS: 4-CHAR CODE & 5-DIGIT NUMBER BOXES */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* 4-Char Code Card */}
+              <div className="p-2.5 rounded-xl bg-indigo-950/30 border border-indigo-500/40 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 block">
+                    Код кімнати (4 знаки)
+                  </span>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    {room.id.split("").map((c, i) => (
+                      <span
+                        key={i}
+                        className="w-6 h-7 flex items-center justify-center font-mono font-black text-sm text-white bg-slate-900 border border-indigo-500/50 rounded-md shadow-inner"
+                      >
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  id="copy-room-code-btn"
+                  onClick={handleCopyCode}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                    copiedCode
+                      ? "bg-emerald-600 text-white"
+                      : "bg-indigo-600/60 hover:bg-indigo-600 text-indigo-200 hover:text-white"
+                  }`}
+                  title="Скопіювати 4-значний код"
+                >
+                  {copiedCode ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copiedCode ? "Скопійовано" : "Код"}
+                </button>
+              </div>
+
+              {/* 5-Digit Number Card */}
+              <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/40 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block">
+                    Номер кімнати (5 цифр)
+                  </span>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    {(room.roomNumber || "48201").split("").map((d, i) => (
+                      <span
+                        key={i}
+                        className="w-6 h-7 flex items-center justify-center font-mono font-black text-sm text-emerald-300 bg-slate-900 border border-emerald-500/50 rounded-md shadow-inner"
+                      >
+                        {d}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  id="copy-room-number-btn"
+                  onClick={handleCopyNumber}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                    copiedNumber
+                      ? "bg-emerald-600 text-white"
+                      : "bg-emerald-600/60 hover:bg-emerald-600 text-emerald-200 hover:text-white"
+                  }`}
+                  title="Скопіювати 5-значний номер"
+                >
+                  {copiedNumber ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copiedNumber ? "Скопійовано" : "Номер"}
+                </button>
+              </div>
             </div>
 
             {/* Direct Invitation Link Share Box */}
             <div className="bg-slate-900/90 border border-slate-700/80 rounded-xl p-2.5 flex items-center justify-between gap-2">
               <div className="truncate">
                 <span className="text-[10px] uppercase font-bold text-indigo-400 block tracking-wider">
-                  Unique Invitation Link
+                  Пряме посилання для мобільних та ПК
                 </span>
                 <span className="text-xs font-mono text-slate-200 truncate block">
-                  {`${window.location.origin}?room=${room.id}`}
+                  {`${window.location.origin}?code=${room.id}&num=${room.roomNumber || ""}`}
                 </span>
               </div>
 
@@ -714,12 +1043,12 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                 }`}
               >
                 {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />}
-                {copiedLink ? "Link Copied!" : "Copy Invite Link"}
+                {copiedLink ? "Скопійовано!" : "Копіювати посилання"}
               </button>
             </div>
 
             <p className="text-[11px] text-slate-400">
-              Game: <strong className="text-slate-200">{room.gameTitle}</strong> ({room.system}) | Mode:{" "}
+              Гра: <strong className="text-slate-200">{room.gameTitle}</strong> ({room.system}) | Режим:{" "}
               <strong className="text-indigo-300">
                 {room.netplayMode === "rollback" ? "GGPO Rollback" : "Lockstep"}
               </strong>
@@ -872,6 +1201,20 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
           </div>
         </div>
       )}
+
+      {/* SEPARATE MODAL WINDOW FOR ENTERING 4-CHARACTER ROOM CODE */}
+      <JoinByCodeModal
+        isOpen={isCodeModalOpen}
+        onClose={() => setIsCodeModalOpen(false)}
+        onJoin={(code) => onJoinRoom(code)}
+      />
+
+      {/* SEPARATE MODAL WINDOW FOR ENTERING 5-DIGIT ROOM NUMBER */}
+      <JoinByNumberModal
+        isOpen={isNumberModalOpen}
+        onClose={() => setIsNumberModalOpen(false)}
+        onJoin={(num) => onJoinRoom(num)}
+      />
     </div>
   );
 };

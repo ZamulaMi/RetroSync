@@ -76,7 +76,9 @@ export interface Participant {
 }
 
 export interface RoomInfo {
-  id: string;
+  id: string; // 4-character code, e.g. "A7X9"
+  code?: string; // 4-character code
+  roomNumber?: string; // 5-digit number, e.g. "48201"
   name: string;
   hostId: string;
   gameTitle: string;

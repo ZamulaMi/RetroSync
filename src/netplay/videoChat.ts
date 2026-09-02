@@ -44,13 +44,21 @@ export class WebRTCVideoChat {
   public onAudioLevels: ((local: number, remote: number) => void) | null = null;
   public onStatusChange: ((status: AVMediaStatus) => void) | null = null;
 
-  // ICE Servers (STUN)
+  // Multi-STUN Redundancy across ports 19302, 3478, and 443 for Mobile Cellular Networks
   private iceServers: RTCConfiguration = {
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
       { urls: "stun:stun2.l.google.com:19302" },
+      { urls: "stun:stun3.l.google.com:19302" },
+      { urls: "stun:stun4.l.google.com:19302" },
+      { urls: "stun:stun.cloudflare.com:3478" },
+      { urls: "stun:global.stun.twilio.com:3478" },
+      { urls: "stun:stun.services.mozilla.com:3478" },
+      { urls: "stun:stun.nextcloud.com:443" },
+      { urls: "stun:stun.sipgate.net:3478" },
     ],
+    iceCandidatePoolSize: 10,
   };
 
   constructor(signaling: SignalingClient) {

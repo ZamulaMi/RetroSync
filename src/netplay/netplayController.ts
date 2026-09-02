@@ -209,9 +209,14 @@ export class NetplayController {
         );
       if (this.onMatchmakingStatusChange) this.onMatchmakingStatusChange("idle");
 
-      // Auto connect WebRTC P2P to Host
+      // Host initiates WebRTC connection upon receiving peer-joined.
+      // If peer is still not connected after 3.5 seconds, guest initiates retry.
       if (this.currentRoom.hostId && this.currentRoom.hostId !== this.myPeerId) {
-        this.peer.connectToPeer(this.currentRoom.hostId);
+        setTimeout(() => {
+          if (this.currentRoom && this.currentRoom.hostId && !this.peer.isConnected()) {
+            this.peer.connectToPeer(this.currentRoom.hostId);
+          }
+        }, 3500);
       }
     });
 
@@ -221,9 +226,11 @@ export class NetplayController {
       const joinedName = data.username as string;
       if (this.onStatusMessage) this.onStatusMessage(`${joinedName} joined the netplay room!`, "info");
 
-      // If host, auto connect P2P to joining peer
+      // Host initiates P2P connection to joining peer cleanly
       if (this.myRole === "player1" && data.peerId) {
-        this.peer.connectToPeer(data.peerId as string);
+        setTimeout(() => {
+          this.peer.connectToPeer(data.peerId as string);
+        }, 150);
       }
     });
 

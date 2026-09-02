@@ -27,7 +27,8 @@ interface RoomParticipant {
 }
 
 interface Room {
-  id: string;
+  id: string; // 4-character code, e.g. "A7X9"
+  roomNumber: string; // 5-digit number, e.g. "48201"
   name: string;
   hostId: string;
   gameTitle: string;
@@ -56,7 +57,46 @@ interface MatchmakingTicket {
 }
 
 const rooms = new Map<string, Room>();
+const roomsByNumber = new Map<string, Room>();
 const matchmakingQueue = new Map<string, MatchmakingTicket>();
+
+// Code and 5-digit number generators
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateRoomCode(): string {
+  let code = "";
+  for (let i = 0; i < 4; i++) {
+    code += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length));
+  }
+  if (rooms.has(code)) {
+    return generateRoomCode();
+  }
+  return code;
+}
+
+function generateRoomNumber(): string {
+  const num = Math.floor(10000 + Math.random() * 90000).toString();
+  if (roomsByNumber.has(num)) {
+    return generateRoomNumber();
+  }
+  return num;
+}
+
+function findRoom(key: string): Room | undefined {
+  if (!key) return undefined;
+  const cleanKey = key.trim().toUpperCase().replace(/^#/, "");
+  // 1. Direct match in 4-character code map
+  if (rooms.has(cleanKey)) return rooms.get(cleanKey);
+  // 2. Direct match in 5-digit number map
+  if (roomsByNumber.has(cleanKey)) return roomsByNumber.get(cleanKey);
+  // 3. Scan all rooms (in case of aliases)
+  for (const r of rooms.values()) {
+    if (r.id.toUpperCase() === cleanKey || r.roomNumber === cleanKey) {
+      return r;
+    }
+  }
+  return undefined;
+}
 
 // Default demo fallback games by system
 const SYSTEM_DEFAULT_GAMES: Record<string, { id: string; title: string; system: string }> = {
@@ -209,12 +249,15 @@ async function startServer() {
     }
   });
 
-  // Get active public rooms
-  app.get("/api/rooms", (_req, res) => {
-    const publicRooms = Array.from(rooms.values())
+  // Get active public rooms with Global Search filter
+  app.get("/api/rooms", (req, res) => {
+    const q = (typeof req.query.q === "string" ? req.query.q : "").trim().toLowerCase();
+    let publicRooms = Array.from(rooms.values())
       .filter((r) => !r.isPrivate)
       .map((r) => ({
-        id: r.id,
+        id: r.id, // 4-character code (e.g. "A7X9")
+        code: r.id,
+        roomNumber: r.roomNumber, // 5-digit number (e.g. "48201")
         name: r.name,
         hostId: r.hostId,
         gameTitle: r.gameTitle,
@@ -227,10 +270,22 @@ async function startServer() {
         isPrivate: false,
         createdAt: r.createdAt,
       }));
+
+    if (q) {
+      publicRooms = publicRooms.filter(
+        (r) =>
+          r.id.toLowerCase().includes(q) ||
+          r.roomNumber.toLowerCase().includes(q) ||
+          r.name.toLowerCase().includes(q) ||
+          r.gameTitle.toLowerCase().includes(q) ||
+          r.system.toLowerCase().includes(q)
+      );
+    }
+
     res.json(publicRooms);
   });
 
-  // Get Matchmaking queue telemetry
+  // Get Matchmaking queue telemetry & global network status
   app.get("/api/matchmaking/stats", (_req, res) => {
     let totalPlayers = 0;
     for (const r of rooms.values()) {
@@ -242,6 +297,8 @@ async function startServer() {
       queueLength: matchmakingQueue.size,
       activeRooms: rooms.size,
       onlinePlayers: Math.max(totalPlayers, 1),
+      cellularRelayActive: true,
+      timestamp: Date.now(),
     });
   });
 
@@ -326,7 +383,8 @@ async function startServer() {
         matchmakingQueue.delete(ticketA.peerId);
         matchmakingQueue.delete(ticketB.peerId);
 
-        const matchRoomId = "MATCH_" + Math.random().toString(36).substring(2, 7).toUpperCase();
+        const matchRoomId = generateRoomCode();
+        const matchRoomNumber = generateRoomNumber();
         const mode =
           ticketA.netplayMode === "lockstep" && ticketB.netplayMode === "lockstep"
             ? "lockstep"
@@ -334,6 +392,7 @@ async function startServer() {
 
         const newRoom: Room = {
           id: matchRoomId,
+          roomNumber: matchRoomNumber,
           name: `Quick Match: ${ticketA.username} vs ${ticketB.username}`,
           hostId: ticketA.peerId,
           gameTitle: matchedGameTitle,
@@ -367,12 +426,15 @@ async function startServer() {
         newRoom.participants.set(ticketA.peerId, participantA);
         newRoom.participants.set(ticketB.peerId, participantB);
         rooms.set(matchRoomId, newRoom);
+        roomsByNumber.set(matchRoomNumber, newRoom);
 
         // Notify Player 1 (Host)
         ticketA.ws.send(
           JSON.stringify({
             type: "match-found",
             roomId: matchRoomId,
+            code: matchRoomId,
+            roomNumber: matchRoomNumber,
             peerId: ticketA.peerId,
             role: "player1",
             opponentName: ticketB.username,
@@ -389,6 +451,8 @@ async function startServer() {
           JSON.stringify({
             type: "match-found",
             roomId: matchRoomId,
+            code: matchRoomId,
+            roomNumber: matchRoomNumber,
             peerId: ticketB.peerId,
             role: "player2",
             opponentName: ticketA.username,
@@ -501,9 +565,9 @@ async function startServer() {
               isPrivate,
               supportedGames,
             } = data;
-            const newRoomId = (
-              roomId || Math.random().toString(36).substring(2, 8).toUpperCase()
-            ).trim();
+            const customCode = (roomId || "").trim().toUpperCase().replace(/^#/, "");
+            const newRoomId = customCode.length === 4 ? customCode : generateRoomCode();
+            const newRoomNumber = generateRoomNumber();
             const newPeerId = peerId || "peer_" + Math.random().toString(36).substring(2, 9);
             const inviteToken = "inv_" + Math.random().toString(36).substring(2, 10);
 
@@ -512,7 +576,8 @@ async function startServer() {
 
             const newRoom: Room = {
               id: newRoomId,
-              name: roomName || `Room #${newRoomId}`,
+              roomNumber: newRoomNumber,
+              name: roomName || `Room #${newRoomNumber} (${newRoomId})`,
               hostId: newPeerId,
               gameTitle: gameTitle || "Retro 2P Combat Arena (NES)",
               gameId: gameId || "nes-netplay-arena-2p",
@@ -536,6 +601,7 @@ async function startServer() {
             };
             newRoom.participants.set(newPeerId, participant);
             rooms.set(newRoomId, newRoom);
+            roomsByNumber.set(newRoomNumber, newRoom);
 
             currentRoomId = newRoomId;
             currentPeerId = newPeerId;
@@ -544,6 +610,8 @@ async function startServer() {
               JSON.stringify({
                 type: "room-created",
                 roomId: newRoomId,
+                code: newRoomId,
+                roomNumber: newRoomNumber,
                 peerId: newPeerId,
                 role: "player1",
                 inviteToken,
@@ -554,14 +622,19 @@ async function startServer() {
           }
 
           case "join-room": {
-            const targetRoomId = (roomId || "").trim().toUpperCase();
-            const targetRoom = rooms.get(targetRoomId);
+            const rawRoomId = (roomId || "").trim();
+            const targetRoom = findRoom(rawRoomId);
             if (!targetRoom) {
               ws.send(
-                JSON.stringify({ type: "error", message: `Room "${targetRoomId}" was not found or has expired.` })
+                JSON.stringify({
+                  type: "error",
+                  message: `Room "${rawRoomId}" was not found or has expired. Please verify the 4-character code or 5-digit number.`,
+                })
               );
               return;
             }
+
+            const targetRoomId = targetRoom.id;
 
             // Remove from matchmaking if they were searching
             if (currentPeerId) matchmakingQueue.delete(currentPeerId);
@@ -784,6 +857,9 @@ async function startServer() {
           room.participants.delete(currentPeerId);
           if (room.participants.size === 0) {
             rooms.delete(currentRoomId);
+            if (room.roomNumber) {
+              roomsByNumber.delete(room.roomNumber);
+            }
           } else {
             // If host left, reassign host
             if (room.hostId === currentPeerId) {
@@ -813,7 +889,9 @@ async function startServer() {
 
   function sanitizeRoom(room: Room) {
     return {
-      id: room.id,
+      id: room.id, // 4-character code (e.g. "A7X9")
+      code: room.id,
+      roomNumber: room.roomNumber, // 5-digit number (e.g. "48201")
       name: room.name,
       hostId: room.hostId,
       gameTitle: room.gameTitle,
