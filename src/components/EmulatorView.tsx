@@ -261,65 +261,17 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
         )}
       </div>
 
-      {/* Primary Visual Controls Legend Bar */}
-      <div
-        id="quick-controls-legend"
-        className="w-full bg-slate-900/90 border border-slate-800 rounded-lg px-3 py-2 mt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs"
-      >
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-slate-400 font-bold text-[11px] uppercase tracking-wider mr-1 flex items-center gap-1">
-            <Keyboard className="w-3.5 h-3.5 text-indigo-400" /> Керування:
-          </span>
-          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-            <span className="text-slate-400 text-[11px]">Рух:</span>
-            <kbd className="font-mono font-bold text-indigo-300">WASD</kbd>
-            <span className="text-slate-500 text-[10px]">або</span>
-            <kbd className="font-mono font-bold text-indigo-300">↑ ↓ ← →</kbd>
-          </div>
-          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-            <span className="text-rose-400 font-semibold text-[11px]">B (Атака):</span>
-            <kbd className="font-mono font-bold text-rose-300">Z</kbd>
-            <span className="text-slate-500 text-[10px]">/</span>
-            <kbd className="font-mono font-bold text-rose-300">J</kbd>
-          </div>
-          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-            <span className="text-emerald-400 font-semibold text-[11px]">A (Стрибок):</span>
-            <kbd className="font-mono font-bold text-emerald-300">X</kbd>
-            <span className="text-slate-500 text-[10px]">/</span>
-            <kbd className="font-mono font-bold text-emerald-300">K</kbd>
-            <span className="text-slate-500 text-[10px]">/</span>
-            <kbd className="font-mono font-bold text-emerald-300">Space</kbd>
-          </div>
-          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-            <span className="text-amber-400 font-semibold text-[11px]">START:</span>
-            <kbd className="font-mono font-bold text-amber-300">Enter</kbd>
-          </div>
-          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-            <span className="text-sky-400 font-semibold text-[11px]">SELECT:</span>
-            <kbd className="font-mono font-bold text-sky-300">Shift</kbd>
-          </div>
+      {/* On-Screen Dedicated Touch Gamepad (Positioned DIRECTLY underneath the screen) */}
+      {showTouchControls && (
+        <div className="w-full mt-2 sm:mt-3">
+          <TouchGamepad
+            controller={controller}
+            system={system}
+            onOpenMenu={onOpenMenu}
+            onReset={handleReset}
+          />
         </div>
-
-        <div className="flex items-center gap-3">
-          {onOpenMenu && (
-            <button
-              id="legend-menu-btn"
-              onClick={onOpenMenu}
-              className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 transition-colors"
-            >
-              <Menu className="w-3.5 h-3.5" />
-              Меню (ESC)
-            </button>
-          )}
-          <button
-            onClick={() => setShowTouchControls(!showTouchControls)}
-            className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-medium flex items-center gap-1"
-          >
-            <Gamepad className="w-3.5 h-3.5" />
-            {showTouchControls ? "Сховати сенсорний пад" : "Сенсорний пад"}
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* Quick Action Toolbar */}
       <div className="flex items-center justify-between flex-wrap gap-2 w-full mt-3 px-1">
@@ -504,17 +456,65 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
         </button>
       </div>
 
-      {/* On-Screen Dedicated Touch Gamepad (Positioned directly under the screen) */}
-      {showTouchControls && (
-        <div className="w-full mt-3">
-          <TouchGamepad
-            controller={controller}
-            system={system}
-            onOpenMenu={onOpenMenu}
-            onReset={handleReset}
-          />
+      {/* Primary Visual Controls Legend & Instructions Bar (Placed underneath Touch Pad) */}
+      <div
+        id="quick-controls-legend"
+        className="w-full bg-slate-900/90 border border-slate-800 rounded-lg px-3 py-2 mt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs"
+      >
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-slate-400 font-bold text-[11px] uppercase tracking-wider mr-1 flex items-center gap-1">
+            <Keyboard className="w-3.5 h-3.5 text-indigo-400" /> Керування:
+          </span>
+          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+            <span className="text-slate-400 text-[11px]">Рух:</span>
+            <kbd className="font-mono font-bold text-indigo-300">WASD</kbd>
+            <span className="text-slate-500 text-[10px]">або</span>
+            <kbd className="font-mono font-bold text-indigo-300">↑ ↓ ← →</kbd>
+          </div>
+          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+            <span className="text-rose-400 font-semibold text-[11px]">B (Атака):</span>
+            <kbd className="font-mono font-bold text-rose-300">Z</kbd>
+            <span className="text-slate-500 text-[10px]">/</span>
+            <kbd className="font-mono font-bold text-rose-300">J</kbd>
+          </div>
+          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+            <span className="text-emerald-400 font-semibold text-[11px]">A (Стрибок):</span>
+            <kbd className="font-mono font-bold text-emerald-300">X</kbd>
+            <span className="text-slate-500 text-[10px]">/</span>
+            <kbd className="font-mono font-bold text-emerald-300">K</kbd>
+            <span className="text-slate-500 text-[10px]">/</span>
+            <kbd className="font-mono font-bold text-emerald-300">Space</kbd>
+          </div>
+          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+            <span className="text-amber-400 font-semibold text-[11px]">START:</span>
+            <kbd className="font-mono font-bold text-amber-300">Enter</kbd>
+          </div>
+          <div className="inline-flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+            <span className="text-sky-400 font-semibold text-[11px]">SELECT:</span>
+            <kbd className="font-mono font-bold text-sky-300">Shift</kbd>
+          </div>
         </div>
-      )}
+
+        <div className="flex items-center gap-3">
+          {onOpenMenu && (
+            <button
+              id="legend-menu-btn"
+              onClick={onOpenMenu}
+              className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 transition-colors cursor-pointer"
+            >
+              <Menu className="w-3.5 h-3.5" />
+              Меню (ESC)
+            </button>
+          )}
+          <button
+            onClick={() => setShowTouchControls(!showTouchControls)}
+            className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-medium flex items-center gap-1 cursor-pointer"
+          >
+            <Gamepad className="w-3.5 h-3.5" />
+            {showTouchControls ? "Сховати сенсорний пад" : "Сенсорний пад"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

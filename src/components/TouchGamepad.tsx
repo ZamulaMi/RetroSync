@@ -2,20 +2,19 @@
  * Dedicated On-Screen Touch Gamepad
  * Optimized specifically for touchscreens and mobile devices:
  * - Positioned directly beneath the screen canvas.
+ * - Exactly 2 LARGE Action Buttons (B and A) with ergonomic thumb spacing.
  * - Complete screen movement & scroll lock (touch-action: none, preventDefault).
- * - Continuous 8-directional thumb tracking (Smooth Joystick & Precision D-Pad modes).
- * - True multi-touch support for simultaneous movement + action button combos.
- * - Turbo Fire buttons and Haptic feedback.
+ * - Continuous 8-directional thumb tracking (Smooth 360° Joystick & Precision 8-Way D-Pad).
+ * - True multi-touch support for simultaneous movement + jump/attack button combos.
+ * - Haptic feedback and visual tactile depression.
  */
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   Gamepad2,
   Compass,
-  Zap,
   RotateCcw,
   Menu,
-  Sparkles,
   Maximize2,
   Minimize2,
 } from "lucide-react";
@@ -42,7 +41,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
   const [padSize, setPadSize] = useState<PadSize>("normal");
   const [hapticsEnabled, setHapticsEnabled] = useState<boolean>(true);
 
-  // Active state for visual highlighting
+  // Active state for visual highlighting of directions
   const [activeDirections, setActiveDirections] = useState<{
     up: boolean;
     down: boolean;
@@ -50,26 +49,15 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
     right: boolean;
   }>({ up: false, down: false, left: false, right: false });
 
+  // Active state for B, A, SELECT, START
   const [activeButtons, setActiveButtons] = useState<{
     a: boolean;
     b: boolean;
-    x: boolean;
-    y: boolean;
-    l: boolean;
-    r: boolean;
-    turboA: boolean;
-    turboB: boolean;
     select: boolean;
     start: boolean;
   }>({
     a: false,
     b: false,
-    x: false,
-    y: false,
-    l: false,
-    r: false,
-    turboA: false,
-    turboB: false,
     select: false,
     start: false,
   });
@@ -78,18 +66,13 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
   const [stickOffset, setStickOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isStickActive, setIsStickActive] = useState<boolean>(false);
 
-  // Turbo timers
-  const turboIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const activeTurboButtonsRef = useRef<{ a: boolean; b: boolean }>({ a: false, b: false });
-
   // Refs for tracking touches
   const stickAreaRef = useRef<HTMLDivElement>(null);
   const stickTouchIdRef = useRef<number | null>(null);
-  const actionAreaRef = useRef<HTMLDivElement>(null);
 
   // Trigger brief haptic feedback on supported touch devices
   const triggerHaptic = useCallback(
-    (durationMs = 12) => {
+    (durationMs = 15) => {
       if (hapticsEnabled && typeof navigator !== "undefined" && navigator.vibrate) {
         try {
           navigator.vibrate(durationMs);
@@ -100,26 +83,6 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
     },
     [hapticsEnabled]
   );
-
-  // Setup Turbo button cycle
-  useEffect(() => {
-    let toggle = false;
-    turboIntervalRef.current = setInterval(() => {
-      toggle = !toggle;
-      if (activeTurboButtonsRef.current.a) {
-        controller.touchState.a = toggle;
-      }
-      if (activeTurboButtonsRef.current.b) {
-        controller.touchState.b = toggle;
-      }
-    }, 45); // ~22Hz rapid fire
-
-    return () => {
-      if (turboIntervalRef.current) {
-        clearInterval(turboIntervalRef.current);
-      }
-    };
-  }, [controller]);
 
   // Clean up all touch states on unmount
   useEffect(() => {
@@ -203,7 +166,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
         left !== controller.touchState.left ||
         right !== controller.touchState.right
       ) {
-        triggerHaptic(8);
+        triggerHaptic(10);
       }
 
       // Apply to controller touch state
@@ -230,7 +193,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
 
   /**
    * Dedicated Touch Events for Movement Pad
-   * Attached directly to elements with non-passive preventDefault() to guarantee zero screen scroll
+   * Attached directly with preventDefault() to guarantee zero screen scroll
    */
   const handleStickTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -240,7 +203,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
       stickTouchIdRef.current = touch.identifier;
       setIsStickActive(true);
       processMovement(touch.clientX, touch.clientY);
-      triggerHaptic(14);
+      triggerHaptic(18);
     }
   };
 
@@ -269,83 +232,49 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
   };
 
   /**
-   * Action button handlers with zero scroll and multi-touch support
+   * Action button handlers (Only 2 large buttons: B and A)
    */
   const handleButtonDown = (
-    btn: "a" | "b" | "x" | "y" | "l" | "r" | "turboA" | "turboB" | "select" | "start",
+    btn: "a" | "b" | "select" | "start",
     e?: React.TouchEvent | React.PointerEvent
   ) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
-    triggerHaptic(15);
-
-    if (btn === "turboA") {
-      activeTurboButtonsRef.current.a = true;
-      setActiveButtons((prev) => ({ ...prev, turboA: true }));
-      return;
-    }
-    if (btn === "turboB") {
-      activeTurboButtonsRef.current.b = true;
-      setActiveButtons((prev) => ({ ...prev, turboB: true }));
-      return;
-    }
-
+    triggerHaptic(20);
     controller.touchState[btn] = true;
     setActiveButtons((prev) => ({ ...prev, [btn]: true }));
   };
 
   const handleButtonUp = (
-    btn: "a" | "b" | "x" | "y" | "l" | "r" | "turboA" | "turboB" | "select" | "start",
+    btn: "a" | "b" | "select" | "start",
     e?: React.TouchEvent | React.PointerEvent
   ) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
-
-    if (btn === "turboA") {
-      activeTurboButtonsRef.current.a = false;
-      controller.touchState.a = false;
-      setActiveButtons((prev) => ({ ...prev, turboA: false }));
-      return;
-    }
-    if (btn === "turboB") {
-      activeTurboButtonsRef.current.b = false;
-      controller.touchState.b = false;
-      setActiveButtons((prev) => ({ ...prev, turboB: false }));
-      return;
-    }
-
     controller.touchState[btn] = false;
     setActiveButtons((prev) => ({ ...prev, [btn]: false }));
   };
 
-  const isAdvancedSystem = system === "SNES" || system === "GBA";
-
-  // Size multipliers
+  // Sizing styles with Extra Large Action Buttons
   const sizeStyles = {
     compact: {
       padHeight: "min-h-[220px]",
-      stickSize: "w-36 h-36",
-      btnSize: "w-13 h-13 text-sm",
-      turboSize: "w-10 h-10 text-[11px]",
-      shoulderSize: "px-4 py-2 text-xs",
+      stickSize: "w-36 h-36 sm:w-40 sm:h-40",
+      btnSize: "w-18 h-18 sm:w-20 sm:h-20 text-2xl font-black",
     },
     normal: {
       padHeight: "min-h-[260px]",
-      stickSize: "w-44 h-44",
-      btnSize: "w-15 h-15 text-base",
-      turboSize: "w-11 h-11 text-xs",
-      shoulderSize: "px-5 py-2.5 text-xs font-bold",
+      stickSize: "w-44 h-44 sm:w-48 sm:h-48",
+      btnSize: "w-22 h-22 sm:w-26 sm:h-26 text-3xl sm:text-4xl font-black",
     },
     large: {
       padHeight: "min-h-[300px]",
-      stickSize: "w-52 h-52",
-      btnSize: "w-18 h-18 text-lg",
-      turboSize: "w-13 h-13 text-sm font-bold",
-      shoulderSize: "px-6 py-3 text-sm font-bold",
+      stickSize: "w-52 h-52 sm:w-56 sm:h-56",
+      btnSize: "w-26 h-26 sm:w-30 sm:h-30 text-4xl sm:text-5xl font-black",
     },
   }[padSize];
 
@@ -364,110 +293,68 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
         e.preventDefault();
       }}
     >
-      {/* Top Controller Bar: Shoulder Buttons (L/R) & Modes */}
+      {/* Top Controller Bar: Mode switch & Size config */}
       <div className="flex items-center justify-between gap-2 mb-2 px-1">
-        {/* Left Shoulder L */}
-        <div className="flex items-center gap-2">
-          {isAdvancedSystem && (
-            <button
-              id="touch-btn-l"
-              onTouchStart={(e) => handleButtonDown("l", e)}
-              onTouchEnd={(e) => handleButtonUp("l", e)}
-              onTouchCancel={(e) => handleButtonUp("l", e)}
-              onPointerDown={(e) => handleButtonDown("l", e)}
-              onPointerUp={(e) => handleButtonUp("l", e)}
-              className={`${sizeStyles.shoulderSize} rounded-lg border transition-all active:scale-95 shadow-md uppercase tracking-wider ${
-                activeButtons.l
-                  ? "bg-indigo-600 text-white border-indigo-400 shadow-indigo-500/40 scale-95"
-                  : "bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-750"
-              }`}
-            >
-              L-Trigger
-            </button>
+        {/* Stick Mode Switcher (Joystick vs D-Pad) */}
+        <button
+          id="touch-toggle-stick-mode"
+          onClick={() => {
+            setStickMode(stickMode === "joystick" ? "dpad" : "joystick");
+            triggerHaptic(20);
+          }}
+          className="px-3 py-1.5 bg-slate-800/90 hover:bg-slate-750 border border-slate-700/80 rounded-lg text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+          title="Перемкнути тип керування рухом (Стік / Хрестовина)"
+        >
+          {stickMode === "joystick" ? (
+            <>
+              <Compass className="w-4 h-4 text-indigo-400" />
+              <span>360° Стік</span>
+            </>
+          ) : (
+            <>
+              <Gamepad2 className="w-4 h-4 text-emerald-400" />
+              <span>8-Way Хрестовина</span>
+            </>
           )}
+        </button>
 
-          {/* Stick Mode Switcher */}
-          <button
-            id="touch-toggle-stick-mode"
-            onClick={() => {
-              setStickMode(stickMode === "joystick" ? "dpad" : "joystick");
-              triggerHaptic(15);
-            }}
-            className="px-2.5 py-1.5 bg-slate-800/90 hover:bg-slate-750 border border-slate-700/80 rounded-lg text-[11px] font-semibold text-slate-300 flex items-center gap-1.5 transition-colors shadow-xs"
-            title="Перемкнути тип керування рухом (Стік / Хрестовина)"
-          >
-            {stickMode === "joystick" ? (
-              <>
-                <Compass className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="hidden sm:inline">Режим:</span> 360° Стік
-              </>
-            ) : (
-              <>
-                <Gamepad2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="hidden sm:inline">Режим:</span> 8-Way D-Pad
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Center Pad Configuration (Size & Haptic) */}
-        <div className="flex items-center gap-1.5 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
+        {/* Center Pad Configuration (Size & Haptics) */}
+        <div className="flex items-center gap-2 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
           <button
             onClick={() => {
               const next = padSize === "compact" ? "normal" : padSize === "normal" ? "large" : "compact";
               setPadSize(next);
-              triggerHaptic(10);
+              triggerHaptic(15);
             }}
-            className="px-2 py-0.5 text-[11px] font-mono text-slate-400 hover:text-slate-200 rounded flex items-center gap-1"
-            title="Розмір сенсорного паду"
+            className="px-2.5 py-1 text-xs font-mono text-slate-300 hover:text-white rounded flex items-center gap-1.5 cursor-pointer"
+            title="Змінити розмір кнопок"
           >
             {padSize === "large" ? (
-              <Minimize2 className="w-3 h-3 text-indigo-400" />
+              <Minimize2 className="w-3.5 h-3.5 text-indigo-400" />
             ) : (
-              <Maximize2 className="w-3 h-3 text-indigo-400" />
+              <Maximize2 className="w-3.5 h-3.5 text-indigo-400" />
             )}
-            <span className="capitalize">{padSize}</span>
+            <span className="capitalize font-semibold">{padSize}</span>
           </button>
 
           <button
             onClick={() => {
               setHapticsEnabled(!hapticsEnabled);
-              triggerHaptic(20);
+              triggerHaptic(25);
             }}
-            className={`px-1.5 py-0.5 text-[10px] rounded font-semibold transition-colors ${
+            className={`px-2 py-1 text-xs rounded font-bold transition-colors cursor-pointer ${
               hapticsEnabled ? "text-amber-400 bg-amber-500/15" : "text-slate-500 hover:text-slate-400"
             }`}
-            title="Вібровідгук (Haptics)"
+            title="Вібровідгук (Vibration Haptics)"
           >
             VIB
           </button>
         </div>
-
-        {/* Right Shoulder R */}
-        <div className="flex items-center gap-2">
-          {isAdvancedSystem && (
-            <button
-              id="touch-btn-r"
-              onTouchStart={(e) => handleButtonDown("r", e)}
-              onTouchEnd={(e) => handleButtonUp("r", e)}
-              onTouchCancel={(e) => handleButtonUp("r", e)}
-              onPointerDown={(e) => handleButtonDown("r", e)}
-              onPointerUp={(e) => handleButtonUp("r", e)}
-              className={`${sizeStyles.shoulderSize} rounded-lg border transition-all active:scale-95 shadow-md uppercase tracking-wider ${
-                activeButtons.r
-                  ? "bg-indigo-600 text-white border-indigo-400 shadow-indigo-500/40 scale-95"
-                  : "bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-750"
-              }`}
-            >
-              R-Trigger
-            </button>
-          )}
-        </div>
       </div>
 
-      {/* Main Interactive Touch Controls Body */}
-      <div className="grid grid-cols-12 gap-2 sm:gap-4 items-center flex-1">
-        {/* LEFT AREA: Optimized Touch Movement Surface (D-Pad / 360° Floating Thumbstick) */}
+      {/* Main Interactive Touch Area */}
+      <div className="grid grid-cols-12 gap-2 sm:gap-6 items-center flex-1 my-1">
+        {/* LEFT AREA: Optimized Touch Movement (360° Thumbstick or D-Pad) */}
         <div className="col-span-6 flex flex-col items-center justify-center relative">
           <div
             id="touch-movement-surface"
@@ -479,8 +366,8 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
             className={`${sizeStyles.stickSize} relative rounded-full bg-slate-950/90 border-2 border-slate-800/90 shadow-inner flex items-center justify-center touch-none cursor-grab active:cursor-grabbing transition-shadow`}
             style={{
               boxShadow: isStickActive
-                ? "inset 0 0 20px rgba(99, 102, 241, 0.25), 0 0 15px rgba(99, 102, 241, 0.15)"
-                : "inset 0 2px 10px rgba(0,0,0,0.6)",
+                ? "inset 0 0 24px rgba(99, 102, 241, 0.35), 0 0 18px rgba(99, 102, 241, 0.2)"
+                : "inset 0 2px 12px rgba(0,0,0,0.7)",
             }}
           >
             {stickMode === "joystick" ? (
@@ -493,28 +380,28 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
 
                 {/* Cardinal Direction Highlights */}
                 <span
-                  className={`absolute top-1 text-[11px] font-bold transition-colors ${
+                  className={`absolute top-1.5 text-xs font-bold transition-colors ${
                     activeDirections.up ? "text-indigo-400 font-extrabold scale-125" : "text-slate-600"
                   }`}
                 >
                   ▲
                 </span>
                 <span
-                  className={`absolute bottom-1 text-[11px] font-bold transition-colors ${
+                  className={`absolute bottom-1.5 text-xs font-bold transition-colors ${
                     activeDirections.down ? "text-indigo-400 font-extrabold scale-125" : "text-slate-600"
                   }`}
                 >
                   ▼
                 </span>
                 <span
-                  className={`absolute left-1.5 text-[11px] font-bold transition-colors ${
+                  className={`absolute left-2 text-xs font-bold transition-colors ${
                     activeDirections.left ? "text-indigo-400 font-extrabold scale-125" : "text-slate-600"
                   }`}
                 >
                   ◀
                 </span>
                 <span
-                  className={`absolute right-1.5 text-[11px] font-bold transition-colors ${
+                  className={`absolute right-2 text-xs font-bold transition-colors ${
                     activeDirections.right ? "text-indigo-400 font-extrabold scale-125" : "text-slate-600"
                   }`}
                 >
@@ -523,26 +410,26 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
 
                 {/* Floating Analog Stick Knob */}
                 <div
-                  className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-800 border-2 border-indigo-300/80 shadow-lg flex items-center justify-center transition-transform duration-75 pointer-events-none"
+                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-800 border-2 border-indigo-300/80 shadow-lg flex items-center justify-center transition-transform duration-75 pointer-events-none"
                   style={{
                     transform: `translate(${stickOffset.x}px, ${stickOffset.y}px) ${
                       isStickActive ? "scale(0.95)" : "scale(1)"
                     }`,
                     boxShadow: isStickActive
-                      ? "0 0 16px rgba(99, 102, 241, 0.7), inset 0 2px 4px rgba(255,255,255,0.4)"
-                      : "0 4px 8px rgba(0,0,0,0.5), inset 0 2px 4px rgba(255,255,255,0.3)",
+                      ? "0 0 20px rgba(99, 102, 241, 0.8), inset 0 2px 5px rgba(255,255,255,0.4)"
+                      : "0 6px 12px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.3)",
                   }}
                 >
-                  <div className="w-5 h-5 rounded-full bg-indigo-900/80 border border-indigo-400/50 shadow-inner" />
+                  <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-indigo-900/80 border border-indigo-400/50 shadow-inner" />
                 </div>
               </>
             ) : (
               /* --- Classic 8-Way Precision Cross D-Pad Mode --- */
               <div className="relative w-full h-full flex items-center justify-center pointer-events-none">
                 {/* Horizontal Bar */}
-                <div className="absolute w-[86%] h-[32%] bg-slate-800/90 border border-slate-700/80 rounded-md shadow flex justify-between items-center px-1">
+                <div className="absolute w-[88%] h-[34%] bg-slate-800/90 border border-slate-700/80 rounded-md shadow flex justify-between items-center px-1.5">
                   <div
-                    className={`w-8 h-8 rounded flex items-center justify-center font-bold text-xs transition-colors ${
+                    className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
                       activeDirections.left
                         ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
                         : "text-slate-400"
@@ -551,7 +438,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
                     ◀
                   </div>
                   <div
-                    className={`w-8 h-8 rounded flex items-center justify-center font-bold text-xs transition-colors ${
+                    className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
                       activeDirections.right
                         ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
                         : "text-slate-400"
@@ -562,9 +449,9 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
                 </div>
 
                 {/* Vertical Bar */}
-                <div className="absolute h-[86%] w-[32%] bg-slate-800/90 border border-slate-700/80 rounded-md shadow flex flex-col justify-between items-center py-1">
+                <div className="absolute h-[88%] w-[34%] bg-slate-800/90 border border-slate-700/80 rounded-md shadow flex flex-col justify-between items-center py-1.5">
                   <div
-                    className={`w-8 h-8 rounded flex items-center justify-center font-bold text-xs transition-colors ${
+                    className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
                       activeDirections.up
                         ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
                         : "text-slate-400"
@@ -573,7 +460,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
                     ▲
                   </div>
                   <div
-                    className={`w-8 h-8 rounded flex items-center justify-center font-bold text-xs transition-colors ${
+                    className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
                       activeDirections.down
                         ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
                         : "text-slate-400"
@@ -585,191 +472,69 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
 
                 {/* Center Core */}
                 <div
-                  className={`w-[32%] h-[32%] z-10 rounded-full border border-slate-600 flex items-center justify-center shadow-inner transition-colors ${
+                  className={`w-[34%] h-[34%] z-10 rounded-full border border-slate-600 flex items-center justify-center shadow-inner transition-colors ${
                     isStickActive ? "bg-indigo-600/40" : "bg-slate-900"
                   }`}
                 >
-                  <div className="w-2.5 h-2.5 rounded-full bg-slate-600" />
+                  <div className="w-3 h-3 rounded-full bg-slate-600" />
                 </div>
               </div>
             )}
           </div>
-          <span className="text-[10px] text-slate-500 font-semibold mt-1 uppercase tracking-wider">
-            {stickMode === "joystick" ? "Сенсорний Стік" : "D-Pad Хрестовина"}
-          </span>
         </div>
 
-        {/* RIGHT AREA: Ergonomic Action Buttons with Turbo & Multi-Touch */}
-        <div
-          ref={actionAreaRef}
-          className="col-span-6 flex flex-col items-center justify-center touch-none"
-        >
-          {/* Turbo Row for high-frequency shooting */}
-          <div className="flex items-center gap-4 mb-2">
+        {/* RIGHT AREA: Exactly TWO Large Action Buttons (B and A) positioned at 45° angle */}
+        <div className="col-span-6 flex items-center justify-center touch-none py-3">
+          <div
+            className="flex items-center justify-center gap-5 sm:gap-7 -rotate-45 transform"
+            style={{ touchAction: "none" }}
+          >
+            {/* LARGE B BUTTON (Bottom-Left at 45°) */}
             <button
-              id="touch-btn-turbo-b"
-              onTouchStart={(e) => handleButtonDown("turboB", e)}
-              onTouchEnd={(e) => handleButtonUp("turboB", e)}
-              onTouchCancel={(e) => handleButtonUp("turboB", e)}
-              onPointerDown={(e) => handleButtonDown("turboB", e)}
-              onPointerUp={(e) => handleButtonUp("turboB", e)}
-              className={`${sizeStyles.turboSize} rounded-full border border-rose-500/40 flex items-center justify-center font-bold text-rose-300 transition-all active:scale-95 shadow-md ${
-                activeButtons.turboB
-                  ? "bg-rose-600 text-white border-rose-300 shadow-rose-500/60 scale-95"
-                  : "bg-rose-950/40 hover:bg-rose-900/50"
+              id="touch-btn-b"
+              onTouchStart={(e) => handleButtonDown("b", e)}
+              onTouchEnd={(e) => handleButtonUp("b", e)}
+              onTouchCancel={(e) => handleButtonUp("b", e)}
+              onPointerDown={(e) => handleButtonDown("b", e)}
+              onPointerUp={(e) => handleButtonUp("b", e)}
+              className={`${sizeStyles.btnSize} rounded-full border-3 flex items-center justify-center transition-all active:scale-90 cursor-pointer shadow-2xl ${
+                activeButtons.b
+                  ? "bg-rose-500 border-rose-100 text-white shadow-rose-500/80 scale-90"
+                  : "bg-gradient-to-b from-rose-500 via-rose-600 to-rose-700 border-rose-300/90 text-white hover:brightness-110"
               }`}
-              title="Turbo B (Auto Rapid Fire)"
+              style={{
+                boxShadow: activeButtons.b
+                  ? "0 0 24px rgba(244, 63, 94, 0.9), inset 0 3px 6px rgba(0,0,0,0.5)"
+                  : "0 8px 16px rgba(0,0,0,0.6), inset 0 3px 4px rgba(255,255,255,0.4)",
+              }}
+              title="Button B"
             >
-              <span className="flex items-center">
-                <Zap className="w-2.5 h-2.5 inline mr-0.5" />B
-              </span>
+              <span className="rotate-45 transform inline-block select-none">B</span>
             </button>
 
+            {/* LARGE A BUTTON (Top-Right at 45°) */}
             <button
-              id="touch-btn-turbo-a"
-              onTouchStart={(e) => handleButtonDown("turboA", e)}
-              onTouchEnd={(e) => handleButtonUp("turboA", e)}
-              onTouchCancel={(e) => handleButtonUp("turboA", e)}
-              onPointerDown={(e) => handleButtonDown("turboA", e)}
-              onPointerUp={(e) => handleButtonUp("turboA", e)}
-              className={`${sizeStyles.turboSize} rounded-full border border-emerald-500/40 flex items-center justify-center font-bold text-emerald-300 transition-all active:scale-95 shadow-md ${
-                activeButtons.turboA
-                  ? "bg-emerald-600 text-white border-emerald-300 shadow-emerald-500/60 scale-95"
-                  : "bg-emerald-950/40 hover:bg-emerald-900/50"
+              id="touch-btn-a"
+              onTouchStart={(e) => handleButtonDown("a", e)}
+              onTouchEnd={(e) => handleButtonUp("a", e)}
+              onTouchCancel={(e) => handleButtonUp("a", e)}
+              onPointerDown={(e) => handleButtonDown("a", e)}
+              onPointerUp={(e) => handleButtonUp("a", e)}
+              className={`${sizeStyles.btnSize} rounded-full border-3 flex items-center justify-center transition-all active:scale-90 cursor-pointer shadow-2xl ${
+                activeButtons.a
+                  ? "bg-emerald-500 border-emerald-100 text-white shadow-emerald-500/80 scale-90"
+                  : "bg-gradient-to-b from-emerald-500 via-emerald-600 to-emerald-700 border-emerald-300/90 text-white hover:brightness-110"
               }`}
-              title="Turbo A (Auto Rapid Fire)"
+              style={{
+                boxShadow: activeButtons.a
+                  ? "0 0 24px rgba(16, 185, 129, 0.9), inset 0 3px 6px rgba(0,0,0,0.5)"
+                  : "0 8px 16px rgba(0,0,0,0.6), inset 0 3px 4px rgba(255,255,255,0.4)",
+              }}
+              title="Button A"
             >
-              <span className="flex items-center">
-                <Zap className="w-2.5 h-2.5 inline mr-0.5" />A
-              </span>
+              <span className="rotate-45 transform inline-block select-none">A</span>
             </button>
           </div>
-
-          {/* Primary Action Diamond / Cluster (Y, X, B, A) */}
-          <div className="relative flex items-center justify-center">
-            {isAdvancedSystem ? (
-              /* SNES/GBA 4-Button Diamond Layout (Y, X, B, A) */
-              <div className="relative w-36 h-36 sm:w-40 sm:h-40 flex items-center justify-center">
-                {/* Top: X */}
-                <button
-                  id="touch-btn-x"
-                  onTouchStart={(e) => handleButtonDown("x", e)}
-                  onTouchEnd={(e) => handleButtonUp("x", e)}
-                  onTouchCancel={(e) => handleButtonUp("x", e)}
-                  onPointerDown={(e) => handleButtonDown("x", e)}
-                  onPointerUp={(e) => handleButtonUp("x", e)}
-                  className={`absolute top-0 w-12 h-12 rounded-full border-2 font-bold transition-all active:scale-95 shadow-lg flex items-center justify-center ${
-                    activeButtons.x
-                      ? "bg-sky-500 border-sky-200 text-white shadow-sky-500/60 scale-95"
-                      : "bg-sky-600/80 border-sky-400/80 text-white hover:bg-sky-500"
-                  }`}
-                >
-                  X
-                </button>
-
-                {/* Left: Y */}
-                <button
-                  id="touch-btn-y"
-                  onTouchStart={(e) => handleButtonDown("y", e)}
-                  onTouchEnd={(e) => handleButtonUp("y", e)}
-                  onTouchCancel={(e) => handleButtonUp("y", e)}
-                  onPointerDown={(e) => handleButtonDown("y", e)}
-                  onPointerUp={(e) => handleButtonUp("y", e)}
-                  className={`absolute left-0 w-12 h-12 rounded-full border-2 font-bold transition-all active:scale-95 shadow-lg flex items-center justify-center ${
-                    activeButtons.y
-                      ? "bg-amber-500 border-amber-200 text-white shadow-amber-500/60 scale-95"
-                      : "bg-amber-600/80 border-amber-400/80 text-white hover:bg-amber-500"
-                  }`}
-                >
-                  Y
-                </button>
-
-                {/* Bottom: B */}
-                <button
-                  id="touch-btn-b"
-                  onTouchStart={(e) => handleButtonDown("b", e)}
-                  onTouchEnd={(e) => handleButtonUp("b", e)}
-                  onTouchCancel={(e) => handleButtonUp("b", e)}
-                  onPointerDown={(e) => handleButtonDown("b", e)}
-                  onPointerUp={(e) => handleButtonUp("b", e)}
-                  className={`absolute bottom-0 w-12 h-12 rounded-full border-2 font-bold transition-all active:scale-95 shadow-lg flex items-center justify-center ${
-                    activeButtons.b
-                      ? "bg-rose-500 border-rose-200 text-white shadow-rose-500/60 scale-95"
-                      : "bg-rose-600/90 border-rose-400 text-white hover:bg-rose-500"
-                  }`}
-                >
-                  B
-                </button>
-
-                {/* Right: A */}
-                <button
-                  id="touch-btn-a"
-                  onTouchStart={(e) => handleButtonDown("a", e)}
-                  onTouchEnd={(e) => handleButtonUp("a", e)}
-                  onTouchCancel={(e) => handleButtonUp("a", e)}
-                  onPointerDown={(e) => handleButtonDown("a", e)}
-                  onPointerUp={(e) => handleButtonUp("a", e)}
-                  className={`absolute right-0 w-12 h-12 rounded-full border-2 font-bold transition-all active:scale-95 shadow-lg flex items-center justify-center ${
-                    activeButtons.a
-                      ? "bg-emerald-500 border-emerald-200 text-white shadow-emerald-500/60 scale-95"
-                      : "bg-emerald-600/90 border-emerald-400 text-white hover:bg-emerald-500"
-                  }`}
-                >
-                  A
-                </button>
-              </div>
-            ) : (
-              /* Classic NES / Game Boy Slanted 2-Button Layout (B, A) */
-              <div className="flex items-center gap-3 sm:gap-5 -rotate-12 transform">
-                {/* B Button (Red/Attack/Dash) */}
-                <button
-                  id="touch-btn-b"
-                  onTouchStart={(e) => handleButtonDown("b", e)}
-                  onTouchEnd={(e) => handleButtonUp("b", e)}
-                  onTouchCancel={(e) => handleButtonUp("b", e)}
-                  onPointerDown={(e) => handleButtonDown("b", e)}
-                  onPointerUp={(e) => handleButtonUp("b", e)}
-                  className={`${sizeStyles.btnSize} rounded-full border-2 font-bold transition-all active:scale-95 shadow-xl flex items-center justify-center cursor-pointer ${
-                    activeButtons.b
-                      ? "bg-rose-500 border-rose-200 text-white shadow-rose-500/70 scale-95"
-                      : "bg-gradient-to-b from-rose-600 to-rose-700 border-rose-400 text-white hover:brightness-110"
-                  }`}
-                  style={{
-                    boxShadow: activeButtons.b
-                      ? "0 0 16px rgba(244, 63, 94, 0.8), inset 0 2px 4px rgba(0,0,0,0.4)"
-                      : "0 4px 10px rgba(0,0,0,0.5), inset 0 2px 3px rgba(255,255,255,0.3)",
-                  }}
-                >
-                  B
-                </button>
-
-                {/* A Button (Emerald/Jump/Action) */}
-                <button
-                  id="touch-btn-a"
-                  onTouchStart={(e) => handleButtonDown("a", e)}
-                  onTouchEnd={(e) => handleButtonUp("a", e)}
-                  onTouchCancel={(e) => handleButtonUp("a", e)}
-                  onPointerDown={(e) => handleButtonDown("a", e)}
-                  onPointerUp={(e) => handleButtonUp("a", e)}
-                  className={`${sizeStyles.btnSize} rounded-full border-2 font-bold transition-all active:scale-95 shadow-xl flex items-center justify-center cursor-pointer ${
-                    activeButtons.a
-                      ? "bg-emerald-500 border-emerald-200 text-white shadow-emerald-500/70 scale-95"
-                      : "bg-gradient-to-b from-emerald-600 to-emerald-700 border-emerald-400 text-white hover:brightness-110"
-                  }`}
-                  style={{
-                    boxShadow: activeButtons.a
-                      ? "0 0 16px rgba(16, 185, 129, 0.8), inset 0 2px 4px rgba(0,0,0,0.4)"
-                      : "0 4px 10px rgba(0,0,0,0.5), inset 0 2px 3px rgba(255,255,255,0.3)",
-                  }}
-                >
-                  A
-                </button>
-              </div>
-            )}
-          </div>
-          <span className="text-[10px] text-slate-500 font-semibold mt-1 uppercase tracking-wider">
-            Дії (Action Pad)
-          </span>
         </div>
       </div>
 
@@ -781,16 +546,17 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
             <button
               id="touch-quick-reset-btn"
               onClick={onReset}
-              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 rounded-lg border border-slate-700 text-xs flex items-center gap-1 transition-colors"
-              title="Перезапуск"
+              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 rounded-lg border border-slate-700 text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Перезапуск гри"
             >
               <RotateCcw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Скинути</span>
             </button>
           )}
         </div>
 
         {/* Center Rubber Console Switches: SELECT & START */}
-        <div className="flex items-center gap-4 sm:gap-6 bg-slate-950/90 px-4 py-1.5 rounded-full border border-slate-800 shadow-inner">
+        <div className="flex items-center gap-4 sm:gap-6 bg-slate-950/90 px-4 sm:px-6 py-1.5 rounded-full border border-slate-800 shadow-inner">
           {/* SELECT Button */}
           <button
             id="touch-btn-select"
@@ -799,7 +565,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
             onTouchCancel={(e) => handleButtonUp("select", e)}
             onPointerDown={(e) => handleButtonDown("select", e)}
             onPointerUp={(e) => handleButtonUp("select", e)}
-            className={`px-3 py-1 rounded-full border text-[11px] font-mono font-bold tracking-wider uppercase transition-all active:scale-95 ${
+            className={`px-3.5 py-1.5 rounded-full border text-xs font-mono font-bold tracking-wider uppercase transition-all active:scale-95 cursor-pointer ${
               activeButtons.select
                 ? "bg-sky-600 text-white border-sky-400 shadow-sky-500/50 scale-95"
                 : "bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200"
@@ -816,7 +582,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
             onTouchCancel={(e) => handleButtonUp("start", e)}
             onPointerDown={(e) => handleButtonDown("start", e)}
             onPointerUp={(e) => handleButtonUp("start", e)}
-            className={`px-3.5 py-1 rounded-full border text-[11px] font-mono font-bold tracking-wider uppercase transition-all active:scale-95 ${
+            className={`px-4 py-1.5 rounded-full border text-xs font-mono font-bold tracking-wider uppercase transition-all active:scale-95 cursor-pointer ${
               activeButtons.start
                 ? "bg-emerald-600 text-white border-emerald-400 shadow-emerald-500/50 scale-95"
                 : "bg-slate-800 text-emerald-400 border-slate-700 hover:bg-slate-750"
@@ -832,10 +598,11 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
             <button
               id="touch-quick-menu-btn"
               onClick={onOpenMenu}
-              className="p-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 rounded-lg border border-amber-500/30 text-xs flex items-center gap-1 transition-colors font-bold"
+              className="px-2.5 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 rounded-lg border border-amber-500/30 text-xs flex items-center gap-1.5 transition-colors font-bold cursor-pointer"
               title="Головне меню гри (ESC)"
             >
               <Menu className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Меню</span>
             </button>
           )}
         </div>
