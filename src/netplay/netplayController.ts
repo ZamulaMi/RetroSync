@@ -15,6 +15,7 @@ import {
   ConsoleSystem,
   ControllerState,
   GamepadButtonMap,
+  GamePlayMode,
   MatchmakingCriteria,
   MatchmakingStatus,
   NetplayMetrics,
@@ -65,7 +66,40 @@ export class NetplayController {
   public matchmakingStatus: MatchmakingStatus = "idle";
   public matchmakingQueueLength: number = 0;
 
-  // Controllers & Keybindings (Default adjacent keys Z/X and J/K)
+  // Game Modes (Local 2-Player on same PC vs Online Netplay)
+  public gamePlayMode: GamePlayMode = "local_2p";
+  public touchPlayerAssignment: 1 | 2 = 1;
+  public onInputActivity: ((p1: ControllerState, p2: ControllerState) => void) | null = null;
+  public p1ActiveState: ControllerState = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    a: false,
+    b: false,
+    x: false,
+    y: false,
+    l: false,
+    r: false,
+    select: false,
+    start: false,
+  };
+  public p2ActiveState: ControllerState = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    a: false,
+    b: false,
+    x: false,
+    y: false,
+    l: false,
+    r: false,
+    select: false,
+    start: false,
+  };
+
+  // Controllers & Keybindings (Default independent non-conflicting keys)
   public p1KeyMap: GamepadButtonMap = {
     up: "KeyW",
     down: "KeyS",
@@ -75,10 +109,10 @@ export class NetplayController {
     a: "KeyX",
     x: "KeyC",
     y: "KeyV",
-    select: "ShiftRight",
-    start: "Enter",
-    turboA: "KeyS",
-    turboB: "KeyA",
+    select: "ShiftLeft",
+    start: "Space",
+    turboA: "KeyK",
+    turboB: "KeyJ",
   };
 
   public p2KeyMap: GamepadButtonMap = {
@@ -86,12 +120,14 @@ export class NetplayController {
     down: "ArrowDown",
     left: "ArrowLeft",
     right: "ArrowRight",
-    a: "Numpad2",
     b: "Numpad1",
+    a: "Numpad2",
     x: "Numpad5",
     y: "Numpad4",
     select: "Numpad0",
     start: "NumpadEnter",
+    turboA: "KeyO",
+    turboB: "KeyL",
   };
 
   public keyState: Set<string> = new Set();
@@ -578,115 +614,184 @@ export class NetplayController {
   }
 
   /**
-   * Polls input devices (Keyboard, HTML5 Gamepad API, Touch)
+   * Polls input for a specific player (1 or 2).
+   * Used for Local 2-Player simultaneous input or for Online Netplay.
    */
-  public pollLocalInput(): number {
+  public pollInputForPlayer(player: 1 | 2): number {
     this.turboCounter++;
     const turboOn = (this.turboCounter % 4) < 2; // 30Hz turbo
-    const map = this.myRole === "player2" ? this.p2KeyMap : this.p1KeyMap;
 
-    const isP1 = this.myRole !== "player2";
+    let ctrl: ControllerState;
 
-    // Check primary mapped key or common intuitive fallback aliases
-    const isUp =
-      this.keyState.has(map.up) ||
-      (isP1 && (this.keyState.has("ArrowUp") || this.keyState.has("KeyW")));
-    const isDown =
-      this.keyState.has(map.down) ||
-      (isP1 && (this.keyState.has("ArrowDown") || this.keyState.has("KeyS")));
-    const isLeft =
-      this.keyState.has(map.left) ||
-      (isP1 && (this.keyState.has("ArrowLeft") || this.keyState.has("KeyA")));
-    const isRight =
-      this.keyState.has(map.right) ||
-      (isP1 && (this.keyState.has("ArrowRight") || this.keyState.has("KeyD")));
+    if (player === 1) {
+      const map = this.p1KeyMap;
+      const isUp = this.keyState.has(map.up) || this.keyState.has("KeyW");
+      const isDown = this.keyState.has(map.down) || this.keyState.has("KeyS");
+      const isLeft = this.keyState.has(map.left) || this.keyState.has("KeyA");
+      const isRight = this.keyState.has(map.right) || this.keyState.has("KeyD");
+      const isA =
+        this.keyState.has(map.a) ||
+        this.keyState.has("KeyX") ||
+        this.keyState.has("KeyK");
+      const isB =
+        this.keyState.has(map.b) ||
+        this.keyState.has("KeyZ") ||
+        this.keyState.has("KeyJ");
+      const isX =
+        Boolean(map.x && this.keyState.has(map.x)) ||
+        this.keyState.has("KeyC") ||
+        this.keyState.has("KeyI");
+      const isY =
+        Boolean(map.y && this.keyState.has(map.y)) ||
+        this.keyState.has("KeyV") ||
+        this.keyState.has("KeyU");
+      const isL =
+        Boolean(map.l && this.keyState.has(map.l)) ||
+        this.keyState.has("KeyQ");
+      const isR =
+        Boolean(map.r && this.keyState.has(map.r)) ||
+        this.keyState.has("KeyE");
+      const isSelect =
+        this.keyState.has(map.select) ||
+        this.keyState.has("ShiftLeft") ||
+        this.keyState.has("Tab");
+      const isStart =
+        this.keyState.has(map.start) ||
+        this.keyState.has("Space") ||
+        this.keyState.has("Enter");
 
-    const isA =
-      this.keyState.has(map.a) ||
-      (isP1 &&
-        (this.keyState.has("KeyK") ||
-          this.keyState.has("KeyX") ||
-          this.keyState.has("KeyC") ||
-          this.keyState.has("Numpad2") ||
-          this.keyState.has("Space")));
+      const isTurboA = Boolean(map.turboA && this.keyState.has(map.turboA));
+      const isTurboB = Boolean(map.turboB && this.keyState.has(map.turboB));
 
-    const isB =
-      this.keyState.has(map.b) ||
-      (isP1 &&
-        (this.keyState.has("KeyJ") ||
-          this.keyState.has("KeyZ") ||
-          this.keyState.has("Numpad1")));
+      const touchActive = this.touchPlayerAssignment === 1;
 
-    const isX =
-      Boolean(map.x && this.keyState.has(map.x)) ||
-      (isP1 && (this.keyState.has("KeyI") || this.keyState.has("KeyV")));
+      ctrl = {
+        up: isUp || (touchActive && this.touchState.up),
+        down: isDown || (touchActive && this.touchState.down),
+        left: isLeft || (touchActive && this.touchState.left),
+        right: isRight || (touchActive && this.touchState.right),
+        a: isA || (touchActive && this.touchState.a) || (isTurboA && turboOn),
+        b: isB || (touchActive && this.touchState.b) || (isTurboB && turboOn),
+        x: isX || (touchActive && this.touchState.x),
+        y: isY || (touchActive && this.touchState.y),
+        l: isL || (touchActive && this.touchState.l),
+        r: isR || (touchActive && this.touchState.r),
+        select: isSelect || (touchActive && this.touchState.select),
+        start: isStart || (touchActive && this.touchState.start),
+      };
 
-    const isY =
-      Boolean(map.y && this.keyState.has(map.y)) ||
-      (isP1 && (this.keyState.has("KeyU") || this.keyState.has("KeyA")));
-
-    const isL =
-      Boolean(map.l && this.keyState.has(map.l)) ||
-      (isP1 && this.keyState.has("KeyQ"));
-
-    const isR =
-      Boolean(map.r && this.keyState.has(map.r)) ||
-      (isP1 && this.keyState.has("KeyE"));
-
-    const isSelect =
-      this.keyState.has(map.select) ||
-      (isP1 &&
-        (this.keyState.has("ShiftRight") ||
-          this.keyState.has("ShiftLeft") ||
-          this.keyState.has("Tab") ||
-          this.keyState.has("Backspace") ||
-          this.keyState.has("KeyQ")));
-
-    const isStart =
-      this.keyState.has(map.start) ||
-      (isP1 &&
-        (this.keyState.has("Enter") ||
-          this.keyState.has("NumpadEnter") ||
-          this.keyState.has("KeyE") ||
-          this.keyState.has("Space")));
-
-    const isTurboA = Boolean(map.turboA && this.keyState.has(map.turboA)) || (isP1 && this.keyState.has("KeyO"));
-    const isTurboB = Boolean(map.turboB && this.keyState.has(map.turboB)) || (isP1 && this.keyState.has("KeyL"));
-
-    const ctrl: ControllerState = {
-      up: isUp || this.touchState.up,
-      down: isDown || this.touchState.down,
-      left: isLeft || this.touchState.left,
-      right: isRight || this.touchState.right,
-      a: isA || this.touchState.a || (isTurboA && turboOn),
-      b: isB || this.touchState.b || (isTurboB && turboOn),
-      x: isX || this.touchState.x,
-      y: isY || this.touchState.y,
-      l: isL || this.touchState.l,
-      r: isR || this.touchState.r,
-      select: isSelect || this.touchState.select,
-      start: isStart || this.touchState.start,
-    };
-
-    // Poll HTML5 Gamepad API
-    if (navigator.getGamepads) {
-      const gamepads = navigator.getGamepads();
-      const gp = gamepads[0] || gamepads[1];
-      if (gp && gp.connected) {
-        if (gp.buttons[12]?.pressed || gp.axes[1] < -0.4) ctrl.up = true;
-        if (gp.buttons[13]?.pressed || gp.axes[1] > 0.4) ctrl.down = true;
-        if (gp.buttons[14]?.pressed || gp.axes[0] < -0.4) ctrl.left = true;
-        if (gp.buttons[15]?.pressed || gp.axes[0] > 0.4) ctrl.right = true;
-        if (gp.buttons[0]?.pressed || gp.buttons[1]?.pressed) ctrl.a = true;
-        if (gp.buttons[2]?.pressed || gp.buttons[3]?.pressed) ctrl.b = true;
-        if (gp.buttons[8]?.pressed) ctrl.select = true;
-        if (gp.buttons[9]?.pressed) ctrl.start = true;
-        if (gp.buttons[4]?.pressed) ctrl.l = true;
-        if (gp.buttons[5]?.pressed) ctrl.r = true;
+      // Poll First HTML5 Gamepad for Player 1
+      if (typeof navigator !== "undefined" && navigator.getGamepads) {
+        const gamepads = navigator.getGamepads();
+        const gp = gamepads[0];
+        if (gp && gp.connected) {
+          if (gp.buttons[12]?.pressed || gp.axes[1] < -0.4) ctrl.up = true;
+          if (gp.buttons[13]?.pressed || gp.axes[1] > 0.4) ctrl.down = true;
+          if (gp.buttons[14]?.pressed || gp.axes[0] < -0.4) ctrl.left = true;
+          if (gp.buttons[15]?.pressed || gp.axes[0] > 0.4) ctrl.right = true;
+          if (gp.buttons[0]?.pressed || gp.buttons[1]?.pressed) ctrl.a = true;
+          if (gp.buttons[2]?.pressed || gp.buttons[3]?.pressed) ctrl.b = true;
+          if (gp.buttons[8]?.pressed) ctrl.select = true;
+          if (gp.buttons[9]?.pressed) ctrl.start = true;
+          if (gp.buttons[4]?.pressed) ctrl.l = true;
+          if (gp.buttons[5]?.pressed) ctrl.r = true;
+        }
       }
+
+      this.p1ActiveState = { ...ctrl };
+    } else {
+      // Player 2
+      const map = this.p2KeyMap;
+      const isUp = this.keyState.has(map.up) || this.keyState.has("ArrowUp");
+      const isDown = this.keyState.has(map.down) || this.keyState.has("ArrowDown");
+      const isLeft = this.keyState.has(map.left) || this.keyState.has("ArrowLeft");
+      const isRight = this.keyState.has(map.right) || this.keyState.has("ArrowRight");
+      const isA =
+        this.keyState.has(map.a) ||
+        this.keyState.has("Numpad2") ||
+        this.keyState.has("Semicolon") ||
+        this.keyState.has("Slash");
+      const isB =
+        this.keyState.has(map.b) ||
+        this.keyState.has("Numpad1") ||
+        this.keyState.has("KeyL") ||
+        this.keyState.has("Period");
+      const isX =
+        Boolean(map.x && this.keyState.has(map.x)) ||
+        this.keyState.has("Numpad5") ||
+        this.keyState.has("KeyP");
+      const isY =
+        Boolean(map.y && this.keyState.has(map.y)) ||
+        this.keyState.has("Numpad4") ||
+        this.keyState.has("KeyO");
+      const isL =
+        Boolean(map.l && this.keyState.has(map.l)) ||
+        this.keyState.has("Numpad7") ||
+        this.keyState.has("BracketLeft");
+      const isR =
+        Boolean(map.r && this.keyState.has(map.r)) ||
+        this.keyState.has("Numpad9") ||
+        this.keyState.has("BracketRight");
+      const isSelect =
+        this.keyState.has(map.select) ||
+        this.keyState.has("Numpad0") ||
+        this.keyState.has("Minus") ||
+        this.keyState.has("ShiftRight");
+      const isStart =
+        this.keyState.has(map.start) ||
+        this.keyState.has("NumpadEnter") ||
+        this.keyState.has("Equal") ||
+        this.keyState.has("Quote");
+
+      const isTurboA = Boolean(map.turboA && this.keyState.has(map.turboA));
+      const isTurboB = Boolean(map.turboB && this.keyState.has(map.turboB));
+
+      const touchActive = this.touchPlayerAssignment === 2;
+
+      ctrl = {
+        up: isUp || (touchActive && this.touchState.up),
+        down: isDown || (touchActive && this.touchState.down),
+        left: isLeft || (touchActive && this.touchState.left),
+        right: isRight || (touchActive && this.touchState.right),
+        a: isA || (touchActive && this.touchState.a) || (isTurboA && turboOn),
+        b: isB || (touchActive && this.touchState.b) || (isTurboB && turboOn),
+        x: isX || (touchActive && this.touchState.x),
+        y: isY || (touchActive && this.touchState.y),
+        l: isL || (touchActive && this.touchState.l),
+        r: isR || (touchActive && this.touchState.r),
+        select: isSelect || (touchActive && this.touchState.select),
+        start: isStart || (touchActive && this.touchState.start),
+      };
+
+      // Poll Second HTML5 Gamepad for Player 2
+      if (typeof navigator !== "undefined" && navigator.getGamepads) {
+        const gamepads = navigator.getGamepads();
+        const gp = gamepads[1] || (this.gamePlayMode === "online" && this.myRole === "player2" ? gamepads[0] : null);
+        if (gp && gp.connected) {
+          if (gp.buttons[12]?.pressed || gp.axes[1] < -0.4) ctrl.up = true;
+          if (gp.buttons[13]?.pressed || gp.axes[1] > 0.4) ctrl.down = true;
+          if (gp.buttons[14]?.pressed || gp.axes[0] < -0.4) ctrl.left = true;
+          if (gp.buttons[15]?.pressed || gp.axes[0] > 0.4) ctrl.right = true;
+          if (gp.buttons[0]?.pressed || gp.buttons[1]?.pressed) ctrl.a = true;
+          if (gp.buttons[2]?.pressed || gp.buttons[3]?.pressed) ctrl.b = true;
+          if (gp.buttons[8]?.pressed) ctrl.select = true;
+          if (gp.buttons[9]?.pressed) ctrl.start = true;
+          if (gp.buttons[4]?.pressed) ctrl.l = true;
+          if (gp.buttons[5]?.pressed) ctrl.r = true;
+        }
+      }
+
+      this.p2ActiveState = { ...ctrl };
     }
 
     return this.emulator.convertControllerToBitmask(ctrl);
+  }
+
+  /**
+   * Polls input device for the current local player role (in online netplay)
+   */
+  public pollLocalInput(): number {
+    return this.pollInputForPlayer(this.myRole === "player2" ? 2 : 1);
   }
 
   /**
@@ -717,14 +822,47 @@ export class NetplayController {
         steps++;
 
         if (this.emulator.isLoaded && !this.emulator.isPaused) {
-          const localInput = this.pollLocalInput();
+          if (this.gamePlayMode === "local_2p") {
+            // Local 2-player on same PC: simultaneous independent input polling
+            const p1Input = this.pollInputForPlayer(1);
+            const p2Input = this.pollInputForPlayer(2);
+            this.emulator.setPlayerInput(1, p1Input);
+            this.emulator.setPlayerInput(2, p2Input);
+            this.emulator.step(true);
 
-          if (this.netplayMode === "rollback") {
-            this.rollbackEngine.advanceFrame(localInput);
-            if (this.onMetricsUpdate) this.onMetricsUpdate(this.rollbackEngine.metrics);
+            if (this.onInputActivity) {
+              this.onInputActivity(this.p1ActiveState, this.p2ActiveState);
+            }
+
+            if (this.onMetricsUpdate) {
+              this.onMetricsUpdate({
+                ping: 0,
+                jitter: 0,
+                packetLoss: 0,
+                rollbacksPerSec: 0,
+                maxRollbackFrames: 0,
+                localFrame: this.emulator.getCurrentFrame(),
+                remoteFrame: this.emulator.getCurrentFrame(),
+                frameAdvantage: 0,
+                desyncCount: 0,
+                p2pConnected: false,
+                connectionType: "local",
+              });
+            }
           } else {
-            this.lockstepEngine.advanceFrame(localInput);
-            if (this.onMetricsUpdate) this.onMetricsUpdate(this.lockstepEngine.metrics);
+            // Online Netplay (Rollback or Lockstep)
+            const localInput = this.pollLocalInput();
+            if (this.onInputActivity) {
+              this.onInputActivity(this.p1ActiveState, this.p2ActiveState);
+            }
+
+            if (this.netplayMode === "rollback") {
+              this.rollbackEngine.advanceFrame(localInput);
+              if (this.onMetricsUpdate) this.onMetricsUpdate(this.rollbackEngine.metrics);
+            } else {
+              this.lockstepEngine.advanceFrame(localInput);
+              if (this.onMetricsUpdate) this.onMetricsUpdate(this.lockstepEngine.metrics);
+            }
           }
         }
       }

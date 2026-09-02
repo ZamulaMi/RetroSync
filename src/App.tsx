@@ -17,6 +17,7 @@ import {
   ConsoleSystem,
   DemoROM,
   GamepadButtonMap,
+  GamePlayMode,
   MatchmakingCriteria,
   MatchmakingStatus,
   NetplayMetrics,
@@ -29,6 +30,9 @@ import { DEMO_ROMS } from "./emulator/demoRoms";
 
 export default function App() {
   const controller = useMemo(() => new NetplayController(), []);
+
+  // Primary Gameplay Mode: "local_2p" (1 PC, 2 separate controls) or "online" (random or friend room)
+  const [gamePlayMode, setGamePlayMode] = useState<GamePlayMode>("local_2p");
 
   // Application State
   const [room, setRoom] = useState<RoomInfo | null>(null);
@@ -125,6 +129,8 @@ export default function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const roomParam = urlParams.get("room");
     if (roomParam) {
+      setGamePlayMode("online");
+      controller.gamePlayMode = "online";
       setTimeout(() => {
         controller.joinRoom(roomParam);
       }, 500);
@@ -203,6 +209,12 @@ export default function App() {
     controller.emulator.loadSaveState(slot);
   };
 
+  // Mode switcher handler
+  const handleSelectGamePlayMode = (mode: GamePlayMode) => {
+    setGamePlayMode(mode);
+    controller.gamePlayMode = mode;
+  };
+
   // Netplay Actions
   const handleCreateRoom = (
     name: string,
@@ -213,6 +225,8 @@ export default function App() {
     gameId?: string,
     supportedGames?: string[]
   ) => {
+    setGamePlayMode("online");
+    controller.gamePlayMode = "online";
     controller.createRoom(
       name,
       title || gameTitle,
@@ -225,6 +239,8 @@ export default function App() {
   };
 
   const handleJoinRoom = (roomId: string) => {
+    setGamePlayMode("online");
+    controller.gamePlayMode = "online";
     controller.joinRoom(roomId);
   };
 
@@ -233,6 +249,8 @@ export default function App() {
   };
 
   const handleStartMatchmaking = (criteria: MatchmakingCriteria) => {
+    setGamePlayMode("online");
+    controller.gamePlayMode = "online";
     controller.startMatchmaking(criteria);
   };
 
@@ -269,6 +287,8 @@ export default function App() {
     >
       {/* Top Header */}
       <Header
+        gamePlayMode={gamePlayMode}
+        onSelectGamePlayMode={handleSelectGamePlayMode}
         room={room}
         volume={volume}
         isMuted={isMuted}
@@ -331,6 +351,12 @@ export default function App() {
         {/* RIGHT DYNAMIC SIDE PANEL: Player Status, WebRTC Voice/Video Chat & Netplay Controls */}
         <div className="lg:col-span-3 xl:col-span-3 flex flex-col gap-4 order-3 lg:order-3">
           <RightPanel
+            gamePlayMode={gamePlayMode}
+            setGamePlayMode={handleSelectGamePlayMode}
+            controller={controller}
+            p1KeyMap={p1KeyMap}
+            p2KeyMap={p2KeyMap}
+            onOpenControls={() => setShowControlsModal(true)}
             room={room}
             videoChat={controller.videoChat}
             myPeerId={controller.myPeerId}

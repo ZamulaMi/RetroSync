@@ -40,6 +40,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
   const [stickMode, setStickMode] = useState<StickMode>("joystick");
   const [padSize, setPadSize] = useState<PadSize>("normal");
   const [hapticsEnabled, setHapticsEnabled] = useState<boolean>(true);
+  const [touchPlayer, setTouchPlayer] = useState<1 | 2>(controller.touchPlayerAssignment || 1);
 
   // Active state for visual highlighting of directions
   const [activeDirections, setActiveDirections] = useState<{
@@ -350,6 +351,43 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
             VIB
           </button>
         </div>
+
+        {/* Local 2-Player Touch assignment selector */}
+        {controller.gamePlayMode === "local_2p" && (
+          <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800 text-[11px] font-bold">
+            <span className="text-slate-500 text-[10px] hidden sm:inline px-1">Touch:</span>
+            <button
+              onClick={() => {
+                controller.touchPlayerAssignment = 1;
+                setTouchPlayer(1);
+                triggerHaptic(20);
+              }}
+              className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                touchPlayer === 1
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-slate-400 hover:text-white"
+              }`}
+              title="Touch controls Player 1"
+            >
+              P1
+            </button>
+            <button
+              onClick={() => {
+                controller.touchPlayerAssignment = 2;
+                setTouchPlayer(2);
+                triggerHaptic(20);
+              }}
+              className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                touchPlayer === 2
+                  ? "bg-amber-600 text-white shadow-sm"
+                  : "text-slate-400 hover:text-white"
+              }`}
+              title="Touch controls Player 2"
+            >
+              P2
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Main Interactive Touch Area */}

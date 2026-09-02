@@ -190,12 +190,54 @@ export const ControlsModal: React.FC<ControlsModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-3 border-t border-slate-800 bg-slate-950 flex justify-end">
+        <div className="p-3 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
+          <button
+            onClick={() => {
+              if (activeTab === "p1") {
+                onUpdateP1KeyMap({
+                  up: "KeyW",
+                  down: "KeyS",
+                  left: "KeyA",
+                  right: "KeyD",
+                  a: "KeyX",
+                  b: "KeyZ",
+                  x: "KeyC",
+                  y: "KeyV",
+                  l: "KeyQ",
+                  r: "KeyE",
+                  select: "ShiftLeft",
+                  start: "Space",
+                  turboA: "KeyT",
+                  turboB: "KeyR",
+                });
+              } else {
+                onUpdateP2KeyMap({
+                  up: "ArrowUp",
+                  down: "ArrowDown",
+                  left: "ArrowLeft",
+                  right: "ArrowRight",
+                  a: "Numpad2",
+                  b: "Numpad1",
+                  x: "Numpad5",
+                  y: "Numpad4",
+                  l: "Numpad7",
+                  r: "Numpad8",
+                  select: "Numpad0",
+                  start: "NumpadEnter",
+                  turboA: "Numpad9",
+                  turboB: "Numpad6",
+                });
+              }
+            }}
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> Скинути за замовчуванням
+          </button>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
+            className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
           >
-            <Check className="w-3.5 h-3.5" /> Done
+            <Check className="w-3.5 h-3.5" /> Готово
           </button>
         </div>
       </div>

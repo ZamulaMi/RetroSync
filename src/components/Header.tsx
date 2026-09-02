@@ -10,10 +10,14 @@ import {
   BookOpen,
   Sliders,
   Sparkles,
+  Users,
+  Globe,
 } from "lucide-react";
-import { RoomInfo, ScreenFilter } from "../types";
+import { GamePlayMode, RoomInfo, ScreenFilter } from "../types";
 
 interface HeaderProps {
+  gamePlayMode: GamePlayMode;
+  onSelectGamePlayMode: (mode: GamePlayMode) => void;
   room: RoomInfo | null;
   volume: number;
   isMuted: boolean;
@@ -29,6 +33,8 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
+  gamePlayMode,
+  onSelectGamePlayMode,
   room,
   volume,
   isMuted,
@@ -67,25 +73,55 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Center status: Room badge & connection */}
-      {room && (
-        <div className="hidden md:flex items-center gap-2 bg-slate-800/80 px-3 py-1 rounded-lg border border-slate-700/80 text-xs">
-          <span className="text-slate-400">Room:</span>
-          <span className="font-mono font-bold text-amber-400 tracking-wider">{room.id}</span>
-          <span className="text-slate-500">|</span>
-          <div className="flex items-center gap-1.5">
-            {p2pConnected ? (
-              <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
-                <Wifi className="w-3.5 h-3.5" /> P2P WebRTC
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 text-amber-400 font-medium">
-                <WifiOff className="w-3.5 h-3.5" /> WS Relay
-              </span>
-            )}
-          </div>
+      {/* Center: Mode Switcher & Room Status */}
+      <div className="flex items-center gap-3">
+        <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-bold shadow-inner">
+          <button
+            id="header-mode-local2p-btn"
+            onClick={() => onSelectGamePlayMode("local_2p")}
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+              gamePlayMode === "local_2p"
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-900/40"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>1 ПК (2 гравці)</span>
+          </button>
+          <button
+            id="header-mode-online-btn"
+            onClick={() => onSelectGamePlayMode("online")}
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+              gamePlayMode === "online"
+                ? "bg-emerald-600 text-white shadow-md shadow-emerald-900/40"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>Онлайн гра</span>
+          </button>
         </div>
-      )}
+
+        {/* Room badge & connection in Online Mode */}
+        {gamePlayMode === "online" && room && (
+          <div className="hidden lg:flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/80 text-xs">
+            <span className="text-slate-400">Кімната:</span>
+            <span className="font-mono font-bold text-amber-400 tracking-wider">#{room.id}</span>
+            <span className="text-slate-500">|</span>
+            <div className="flex items-center gap-1.5">
+              {p2pConnected ? (
+                <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
+                  <Wifi className="w-3.5 h-3.5" /> P2P WebRTC
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-amber-400 font-medium">
+                  <WifiOff className="w-3.5 h-3.5" /> WS Relay
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Right Controls */}
       <div className="flex items-center gap-2">

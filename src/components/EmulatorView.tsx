@@ -199,24 +199,6 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.4)_50%)] bg-[length:100%_4px] opacity-70" />
         )}
 
-        {/* Active ROM In-Emulator Header OSD */}
-        {currentTitle && (
-          <div
-            id="emulator-active-rom-overlay"
-            className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none z-10 transition-opacity"
-          >
-            <div className="bg-slate-950/80 backdrop-blur-md px-2.5 py-1 rounded-md border border-slate-700/80 shadow-lg flex items-center gap-2 max-w-[85%] truncate">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-              <span className="text-[11px] font-mono font-bold text-slate-100 truncate drop-shadow-sm">
-                {currentTitle}
-              </span>
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-indigo-500/25 text-indigo-300 border border-indigo-500/35 shrink-0">
-                {system}
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* Overlay Toast Notification */}
         {flashMessage && (
           <div className="absolute top-12 left-1/2 -translate-x-1/2 bg-indigo-600/90 text-white font-mono text-xs px-3 py-1.5 rounded-md shadow-lg border border-indigo-400 backdrop-blur-sm animate-fade-in pointer-events-none z-30">

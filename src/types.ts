@@ -4,6 +4,8 @@
 
 export type ConsoleSystem = "NES" | "SNES" | "GBA" | "GB" | "GBC";
 
+export type GamePlayMode = "local_2p" | "online";
+
 export type NetplayMode = "rollback" | "lockstep";
 
 export type PlayerRole = "player1" | "player2" | "spectator";
