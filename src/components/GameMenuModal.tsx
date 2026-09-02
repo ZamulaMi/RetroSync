@@ -154,7 +154,7 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
                 </span>
               </h2>
               <p className="text-xs text-slate-400 truncate max-w-[260px] sm:max-w-xs">
-                Активний ROM: <span className="text-indigo-300 font-semibold">{currentGameTitle || "Не завантажено"}</span>
+                <span className="text-indigo-300 font-semibold">{currentGameTitle || "Не завантажено"}</span>
               </p>
             </div>
           </div>
