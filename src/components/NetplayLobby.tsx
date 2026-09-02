@@ -673,7 +673,7 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                   </div>
                 </div>
 
-                {/* OPTION 2: SEPARATE WINDOW FOR 5-DIGIT NUMBER */}
+                {/* OPTION 2: SEPARATE WINDOW FOR 6-DIGIT NUMBER */}
                 <div className="p-3.5 rounded-xl bg-gradient-to-b from-emerald-950/40 to-slate-900 border border-emerald-500/40 flex flex-col justify-between space-y-3">
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
@@ -681,15 +681,15 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                         <Hash className="w-3.5 h-3.5 text-emerald-400" /> Вікно 2: Номер кімнати
                       </span>
                       <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-200 border border-emerald-400/40">
-                        5 цифр
+                        6 цифр
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Зручний числовий номер кімнати (наприклад: 48201) для швидкого набору на клавіатурі.
+                      Зручний числовий номер кімнати (наприклад: 852401) для швидкого набору на клавіатурі.
                     </p>
                   </div>
 
-                  {/* Inline quick 5-digit boxes */}
+                  {/* Inline quick 6-digit boxes */}
                   <div className="space-y-2">
                     <button
                       id="open-number-modal-btn"
@@ -698,7 +698,7 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                       className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-900/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
-                      Відкрити вікно номера
+                      Відкрити вікно номера (6 цифр)
                     </button>
 
                     <div className="flex items-center gap-1.5 pt-1">
@@ -707,16 +707,16 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                         type="text"
                         inputMode="numeric"
                         pattern="[0-9]*"
-                        maxLength={5}
-                        placeholder="12345"
+                        maxLength={6}
+                        placeholder="852401"
                         value={inlineNumber}
-                        onChange={(e) => setInlineNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 5))}
+                        onChange={(e) => setInlineNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
                         className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-center text-xs font-mono font-bold tracking-widest text-emerald-300 focus:outline-none focus:border-emerald-400"
                       />
                       <button
                         id="quick-join-number-btn"
                         type="button"
-                        disabled={inlineNumber.trim().length !== 5}
+                        disabled={inlineNumber.trim().length !== 6}
                         onClick={() => onJoinRoom(inlineNumber.trim())}
                         className="py-1.5 px-3 bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg text-xs font-bold cursor-pointer"
                       >
@@ -777,7 +777,7 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
                     <Globe className="w-4 h-4 text-emerald-400" /> Глобальний пошук кімнат
                   </h3>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Пошук за 4-значним кодом, 5-значним номером, грою чи платформою
+                    Пошук за 4-значним кодом, 6-значним номером, грою чи платформою (доступно через мобільний інтернет 4G/5G)
                   </p>
                 </div>
 
@@ -797,31 +797,58 @@ export const NetplayLobby: React.FC<NetplayLobbyProps> = ({
               </div>
 
               {/* Live Global Search Bar */}
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  id="global-rooms-search-input"
-                  type="text"
-                  placeholder="Глобальний пошук: введіть назву гри, консоль, 4 знаки коду або 5 цифр номера..."
-                  value={globalSearchQuery}
-                  onChange={(e) => {
-                    const q = e.target.value;
-                    setGlobalSearchQuery(q);
-                    fetchPublicRooms(q);
-                  }}
-                  className="w-full bg-slate-900 border border-slate-700/90 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
-                />
-                {globalSearchQuery && (
-                  <button
-                    onClick={() => {
-                      setGlobalSearchQuery("");
-                      fetchPublicRooms("");
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    id="global-rooms-search-input"
+                    type="text"
+                    placeholder="Введіть 4-значний код (наприклад: BC85), 6-значний номер (наприклад: 852401) або назву гри..."
+                    value={globalSearchQuery}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const trimmed = globalSearchQuery.trim();
+                        if (trimmed.length === 4 || /^\d{6}$/.test(trimmed)) {
+                          onJoinRoom(trimmed);
+                        } else {
+                          fetchPublicRooms(trimmed);
+                        }
+                      }
                     }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
-                  >
-                    ✕
-                  </button>
-                )}
+                    onChange={(e) => {
+                      const q = e.target.value;
+                      setGlobalSearchQuery(q);
+                      fetchPublicRooms(q);
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700/90 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                  />
+                  {globalSearchQuery && (
+                    <button
+                      onClick={() => {
+                        setGlobalSearchQuery("");
+                        fetchPublicRooms("");
+                      }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const trimmed = globalSearchQuery.trim();
+                    if (trimmed.length === 4 || /^\d{6}$/.test(trimmed)) {
+                      onJoinRoom(trimmed);
+                    } else {
+                      fetchPublicRooms(trimmed);
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Шукати</span>
+                </button>
               </div>
 
               {/* System Filter Chips */}

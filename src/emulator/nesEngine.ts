@@ -35,6 +35,23 @@ export class NesEmulator {
   private prevP1Mask: number = 0;
   private prevP2Mask: number = 0;
 
+  // PRNG Deterministic Seed for 100% synchronized physics & RNG across online peers
+  private prngSeed: number = 123456789;
+
+  public setPrngSeed(seed: number) {
+    this.prngSeed = (seed >>> 0) || 123456789;
+  }
+
+  public getPrngSeed(): number {
+    return this.prngSeed;
+  }
+
+  public nextRandom(): number {
+    // 32-bit Linear Congruential Generator for bit-identical physics on both peers
+    this.prngSeed = (Math.imul(1664525, this.prngSeed) + 1013904223) >>> 0;
+    return this.prngSeed / 4294967296;
+  }
+
   // Interactive Demo State for 100% full-screen playable 2-player games
   private demoState = {
     // Scores & Health
@@ -43,6 +60,7 @@ export class NesEmulator {
     p1Health: 100,
     p2Health: 100,
     timer: 99,
+    respawnTimer: 0,
     // Player 1
     p1X: 48,
     p1Y: 176,
@@ -264,6 +282,7 @@ export class NesEmulator {
       p1Health: 100,
       p2Health: 100,
       timer: 99,
+      respawnTimer: 0,
       p1X: this.demoType === "pong" ? 18 : 48,
       p1Y: this.demoType === "pong" ? 120 : 176,
       p1Vx: 0,
@@ -453,14 +472,14 @@ export class NesEmulator {
       s.ballX = 128;
       s.ballY = 120;
       s.ballVx = 2.8;
-      s.ballVy = (Math.random() - 0.5) * 3;
+      s.ballVy = (this.nextRandom() - 0.5) * 3;
       this.audio.writeSample(0.5);
     } else if (s.ballX > 252) {
       s.p1Score++;
       s.ballX = 128;
       s.ballY = 120;
       s.ballVx = -2.8;
-      s.ballVy = (Math.random() - 0.5) * 3;
+      s.ballVy = (this.nextRandom() - 0.5) * 3;
       this.audio.writeSample(0.5);
     }
   }
@@ -512,10 +531,7 @@ export class NesEmulator {
             s.p1Score++;
             s.bannerText = "PLAYER 1 WINS ROUND!";
             s.bannerTimer = 90;
-            setTimeout(() => {
-              s.p1Health = 100;
-              s.p2Health = 100;
-            }, 1200);
+            s.respawnTimer = 72;
           }
         }
       }
@@ -561,12 +577,26 @@ export class NesEmulator {
             s.p2Score++;
             s.bannerText = "PLAYER 2 WINS ROUND!";
             s.bannerTimer = 90;
-            setTimeout(() => {
-              s.p1Health = 100;
-              s.p2Health = 100;
-            }, 1200);
+            s.respawnTimer = 72;
           }
         }
+      }
+    }
+
+    // Frame-based deterministic round respawn (synchronized across both peers)
+    if (s.respawnTimer > 0) {
+      s.respawnTimer--;
+      if (s.respawnTimer === 0) {
+        s.p1Health = 100;
+        s.p2Health = 100;
+        s.p1X = 48;
+        s.p1Y = groundY;
+        s.p1Vx = 0;
+        s.p1Vy = 0;
+        s.p2X = 200;
+        s.p2Y = groundY;
+        s.p2Vx = 0;
+        s.p2Vy = 0;
       }
     }
 
@@ -641,10 +671,10 @@ export class NesEmulator {
       this.demoState.particles.push({
         x,
         y,
-        vx: (Math.random() - 0.5) * 4,
-        vy: (Math.random() - 0.5) * 4,
+        vx: (this.nextRandom() - 0.5) * 4,
+        vy: (this.nextRandom() - 0.5) * 4,
         color,
-        life: 12 + Math.floor(Math.random() * 8),
+        life: 12 + Math.floor(this.nextRandom() * 8),
       });
     }
   }
@@ -1063,6 +1093,7 @@ export class NesEmulator {
         p1Mask: this.p1InputMask,
         p2Mask: this.p2InputMask,
         demoState: JSON.parse(JSON.stringify(this.demoState)),
+        prngSeed: this.prngSeed,
       };
     }
     try {
@@ -1074,12 +1105,14 @@ export class NesEmulator {
         prevP1: this.prevP1Mask,
         prevP2: this.prevP2Mask,
         state: rawState,
+        prngSeed: this.prngSeed,
       };
     } catch {
       return {
         frame: this.currentFrame,
         p1Mask: this.p1InputMask,
         p2Mask: this.p2InputMask,
+        prngSeed: this.prngSeed,
       };
     }
   }
@@ -1091,8 +1124,11 @@ export class NesEmulator {
     this.currentFrame = (snapshot.frame as number) || 0;
     this.p1InputMask = (snapshot.p1Mask as number) || 0;
     this.p2InputMask = (snapshot.p2Mask as number) || 0;
+    if (typeof snapshot.prngSeed === "number") {
+      this.prngSeed = snapshot.prngSeed;
+    }
     if (this.isDemoMode && snapshot.demoState) {
-      this.demoState = snapshot.demoState as typeof this.demoState;
+      this.demoState = JSON.parse(JSON.stringify(snapshot.demoState));
       return;
     }
     this.prevP1Mask = (snapshot.prevP1 as number) || 0;
@@ -1107,12 +1143,35 @@ export class NesEmulator {
   }
 
   /**
-   * Fast CRC32/Adler32 hash of RAM for desync detection across network
+   * Fast CRC32/Adler32 hash of RAM or physics state for desync detection across network
    */
   public computeStateHash(): number {
     if (this.isDemoMode) {
       const s = this.demoState;
-      return ((s.p1Score * 1000 + s.p2Score * 100 + Math.floor(s.p1X + s.p2X + s.ballX)) >>> 0);
+      let hash = 0x811c9dc5;
+      const metrics = [
+        s.p1Score,
+        s.p2Score,
+        s.p1Health,
+        s.p2Health,
+        s.timer,
+        s.respawnTimer,
+        Math.round(s.p1X * 10),
+        Math.round(s.p1Y * 10),
+        Math.round(s.p2X * 10),
+        Math.round(s.p2Y * 10),
+        Math.round(s.ballX * 10),
+        Math.round(s.ballY * 10),
+        Math.round(s.ballVx * 10),
+        Math.round(s.ballVy * 10),
+        s.projectiles.length,
+        this.prngSeed & 0xffff,
+      ];
+      for (const m of metrics) {
+        hash ^= m;
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return hash >>> 0;
     }
     try {
       const cpu = (this.nes as unknown as { cpu: { mem: number[] } }).cpu;

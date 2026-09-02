@@ -45,6 +45,11 @@ export class LockstepNetplayEngine {
     this.frameDelay = Math.max(1, Math.min(10, delay));
   }
 
+  public handleIncomingRemoteInput(frame: number, inputMask: number) {
+    this.remoteInputs.set(frame, inputMask);
+    this.lastConfirmedRemoteFrame = Math.max(this.lastConfirmedRemoteFrame, frame);
+  }
+
   private setupPeerCallbacks() {
     this.peer.onInputData = (data) => {
       if (data instanceof Uint8Array && data.byteLength >= 8) {

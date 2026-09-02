@@ -60,7 +60,7 @@ const rooms = new Map<string, Room>();
 const roomsByNumber = new Map<string, Room>();
 const matchmakingQueue = new Map<string, MatchmakingTicket>();
 
-// Code and 5-digit number generators
+// Code and 6-digit number generators
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function generateRoomCode(): string {
@@ -75,10 +75,13 @@ function generateRoomCode(): string {
 }
 
 function generateRoomNumber(): string {
-  const num = Math.floor(10000 + Math.random() * 90000).toString();
-  if (roomsByNumber.has(num)) {
-    return generateRoomNumber();
-  }
+  // 6-digit number between 100000 and 999999
+  let num: string;
+  let attempts = 0;
+  do {
+    num = Math.floor(100000 + Math.random() * 900000).toString();
+    attempts++;
+  } while (roomsByNumber.has(num) && attempts < 100);
   return num;
 }
 
@@ -87,9 +90,9 @@ function findRoom(key: string): Room | undefined {
   const cleanKey = key.trim().toUpperCase().replace(/^#/, "");
   // 1. Direct match in 4-character code map
   if (rooms.has(cleanKey)) return rooms.get(cleanKey);
-  // 2. Direct match in 5-digit number map
+  // 2. Direct match in 6-digit / numeric room map
   if (roomsByNumber.has(cleanKey)) return roomsByNumber.get(cleanKey);
-  // 3. Scan all rooms (in case of aliases)
+  // 3. Scan all rooms (in case of aliases or case variance)
   for (const r of rooms.values()) {
     if (r.id.toUpperCase() === cleanKey || r.roomNumber === cleanKey) {
       return r;
@@ -97,6 +100,71 @@ function findRoom(key: string): Room | undefined {
   }
   return undefined;
 }
+
+// Seed community rooms so global search is instantly responsive
+function seedInitialLobbyRooms() {
+  if (rooms.size > 0) return;
+  const initialRooms: Array<{ id: string; num: string; name: string; gameTitle: string; gameId: string; system: string; mode: "rollback" | "lockstep" }> = [
+    {
+      id: "BC85",
+      num: "852401",
+      name: "Battle City (1985) - 2P Co-Op Tank Duel",
+      gameTitle: "Battle City (1985)",
+      gameId: "nes-battle-city",
+      system: "NES",
+      mode: "rollback",
+    },
+    {
+      id: "AREN",
+      num: "109342",
+      name: "Retro 2P Combat Arena - Championship",
+      gameTitle: "Retro 2P Combat Arena (NES)",
+      gameId: "nes-netplay-arena-2p",
+      system: "NES",
+      mode: "rollback",
+    },
+    {
+      id: "PONG",
+      num: "374619",
+      name: "Hyper Pong Championship 60FPS Netplay",
+      gameTitle: "Hyper Pong Championship (NES)",
+      gameId: "nes-netplay-pong",
+      system: "NES",
+      mode: "rollback",
+    },
+    {
+      id: "GBLK",
+      num: "551928",
+      name: "Game Boy Link Duel 2-Player",
+      gameTitle: "Game Boy Link Duel (GB)",
+      gameId: "gb-link-battle",
+      system: "GB",
+      mode: "lockstep",
+    },
+  ];
+
+  for (const item of initialRooms) {
+    const dummyRoom: Room = {
+      id: item.id,
+      roomNumber: item.num,
+      name: item.name,
+      hostId: "host_" + item.id.toLowerCase(),
+      gameTitle: item.gameTitle,
+      gameId: item.gameId,
+      system: item.system,
+      netplayMode: item.mode,
+      frameDelay: 2,
+      isPrivate: false,
+      inviteToken: "inv_" + item.id.toLowerCase(),
+      supportedGames: [item.gameId],
+      participants: new Map(),
+      createdAt: Date.now() - 3600000,
+    };
+    rooms.set(item.id, dummyRoom);
+    roomsByNumber.set(item.num, dummyRoom);
+  }
+}
+seedInitialLobbyRooms();
 
 // Default demo fallback games by system
 const SYSTEM_DEFAULT_GAMES: Record<string, { id: string; title: string; system: string }> = {
@@ -251,13 +319,14 @@ async function startServer() {
 
   // Get active public rooms with Global Search filter
   app.get("/api/rooms", (req, res) => {
-    const q = (typeof req.query.q === "string" ? req.query.q : "").trim().toLowerCase();
-    let publicRooms = Array.from(rooms.values())
-      .filter((r) => !r.isPrivate)
-      .map((r) => ({
-        id: r.id, // 4-character code (e.g. "A7X9")
+    try {
+      const q = (typeof req.query.q === "string" ? req.query.q : "").trim().toLowerCase();
+      
+      const allRooms = Array.from(rooms.values());
+      const mapped = allRooms.map((r) => ({
+        id: r.id, // 4-character code (e.g. "BC85")
         code: r.id,
-        roomNumber: r.roomNumber, // 5-digit number (e.g. "48201")
+        roomNumber: r.roomNumber || "", // 6-digit number (e.g. "852401")
         name: r.name,
         hostId: r.hostId,
         gameTitle: r.gameTitle,
@@ -267,22 +336,32 @@ async function startServer() {
         playerCount: r.participants.size,
         hasPlayer1: Array.from(r.participants.values()).some((p) => p.role === "player1"),
         hasPlayer2: Array.from(r.participants.values()).some((p) => p.role === "player2"),
-        isPrivate: false,
+        isPrivate: r.isPrivate,
         createdAt: r.createdAt,
       }));
 
-    if (q) {
-      publicRooms = publicRooms.filter(
-        (r) =>
-          r.id.toLowerCase().includes(q) ||
-          r.roomNumber.toLowerCase().includes(q) ||
-          r.name.toLowerCase().includes(q) ||
-          r.gameTitle.toLowerCase().includes(q) ||
-          r.system.toLowerCase().includes(q)
-      );
-    }
+      let results = mapped;
+      if (q) {
+        results = mapped.filter((r) => {
+          const codeMatch = r.id.toLowerCase() === q || r.id.toLowerCase().includes(q);
+          const numMatch = r.roomNumber.toLowerCase() === q || r.roomNumber.toLowerCase().includes(q);
+          const titleMatch = (r.gameTitle || "").toLowerCase().includes(q);
+          const nameMatch = (r.name || "").toLowerCase().includes(q);
+          const sysMatch = (r.system || "").toLowerCase().includes(q);
+          // If exact code or number matched, show even if private
+          if (codeMatch || numMatch) return true;
+          return !r.isPrivate && (titleMatch || nameMatch || sysMatch);
+        });
+      } else {
+        // Without query, show public rooms
+        results = mapped.filter((r) => !r.isPrivate);
+      }
 
-    res.json(publicRooms);
+      res.setHeader("Content-Type", "application/json");
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to search rooms", details: err?.message });
+    }
   });
 
   // Get Matchmaking queue telemetry & global network status

@@ -158,6 +158,7 @@ export class NetplayController {
   public onStatusMessage: ((msg: string, type?: "info" | "success" | "warn") => void) | null = null;
   public onMatchmakingStatusChange: ((status: MatchmakingStatus, details?: Record<string, unknown>) => void) | null = null;
   public onGameSyncUpdate: ((state: GameSyncState) => void) | null = null;
+  public isGameSyncInitiator: boolean = false;
 
   constructor() {
     this.emulator = new UniversalEmulator();
@@ -308,7 +309,8 @@ export class NetplayController {
       const system = (data.system as string) || "NES";
 
       if (step === "announce") {
-        // Step 1: Client receives announcement, pauses emulation, and loads new ROM
+        // Step 1: Receiving player loads announced game and pauses emulation
+        this.isGameSyncInitiator = false;
         this.emulator.isPaused = true;
         this.updateSyncState({
           phase: "loading",
@@ -316,7 +318,7 @@ export class NetplayController {
           targetGameTitle: gameTitle,
           targetSystem: system,
           progress: 45,
-          message: `Host switched game to "${gameTitle}". Verifying & loading ROM...`,
+          message: `Opponent switched game to "${gameTitle}". Verifying & loading ROM...`,
           isHost: false,
         });
 
@@ -335,17 +337,20 @@ export class NetplayController {
           system,
         });
       } else if (step === "state") {
-        // Step 3: Client receives initial state snapshot
+        // Step 3: Peer receives deterministic PRNG seed and initial state snapshot (Frame 0)
         this.updateSyncState({
           phase: "state_transfer",
           stepIndex: 3,
           targetGameTitle: gameTitle,
           targetSystem: system,
           progress: 80,
-          message: "Receiving initial state snapshot (Frame 0)...",
+          message: "Receiving initial state snapshot & PRNG seed (Frame 0)...",
           isHost: false,
         });
 
+        if (typeof data.seed === "number") {
+          this.emulator.setPrngSeed(data.seed);
+        }
         if (data.snapshot) {
           this.emulator.restoreSnapshot(data.snapshot as Record<string, unknown>);
         }
@@ -371,7 +376,7 @@ export class NetplayController {
         });
 
         if (this.onStatusMessage) {
-          this.onStatusMessage(`Synchronized with host in "${gameTitle}"!`, "success");
+          this.onStatusMessage(`Synchronized with peer in "${gameTitle}"!`, "success");
         }
 
         setTimeout(() => {
@@ -390,19 +395,22 @@ export class NetplayController {
 
     this.signaling.on("game-sync-ack", (data) => {
       const step = data.step as string;
+      const isInitiator = this.isGameSyncInitiator || this.myRole === "player1";
 
-      if (step === "loaded" && this.myRole === "player1") {
-        // Host transfers initial state snapshot
+      if (step === "loaded" && isInitiator) {
+        // Initiator creates snapshot and deterministic seed for identical physics
         this.updateSyncState({
           phase: "state_transfer",
           stepIndex: 3,
           targetGameTitle: this.gameSyncState.targetGameTitle,
           targetSystem: this.gameSyncState.targetSystem,
           progress: 75,
-          message: "Peer verified ROM. Transferring Frame 0 state snapshot...",
-          isHost: true,
+          message: "Peer verified ROM. Synchronizing PRNG seed & state snapshot (Frame 0)...",
+          isHost: this.myRole === "player1",
         });
 
+        const seed = Math.floor(Math.random() * 1000000000);
+        this.emulator.setPrngSeed(seed);
         const snapshot = this.emulator.saveSnapshot();
         this.rollbackEngine.reset();
         this.lockstepEngine.reset();
@@ -411,11 +419,12 @@ export class NetplayController {
           type: "game-sync-step",
           step: "state",
           snapshot,
+          seed,
           gameTitle: this.gameSyncState.targetGameTitle,
           system: this.gameSyncState.targetSystem,
         });
-      } else if (step === "state_ready" && this.myRole === "player1") {
-        // Host resumes both emulators
+      } else if (step === "state_ready" && isInitiator) {
+        // Initiator unpauses and signals peer to unpause on the exact same frame
         this.emulator.isPaused = false;
         this.updateSyncState({
           phase: "resumed",
@@ -424,7 +433,7 @@ export class NetplayController {
           targetSystem: this.gameSyncState.targetSystem,
           progress: 100,
           message: `Synchronized and running "${this.gameSyncState.targetGameTitle}"!`,
-          isHost: true,
+          isHost: this.myRole === "player1",
         });
 
         this.signaling.send({
@@ -446,7 +455,7 @@ export class NetplayController {
             targetSystem: "NES",
             progress: 0,
             message: "Ready",
-            isHost: true,
+            isHost: this.myRole === "player1",
           });
         }, 3500);
       }
@@ -467,8 +476,21 @@ export class NetplayController {
     // Fallback Relay handler
     this.signaling.on("netplay-input-relay", (data) => {
       if (!this.peer.isConnected()) {
-        const payload = JSON.stringify({ frame: data.frame, inputMask: data.inputMask });
+        const frame = Number(data.frame) || 0;
+        const inputMask = Number(data.inputMask) || 0;
+        const payload = JSON.stringify({ frame, inputMask });
         this.rollbackEngine.handleIncomingRemoteInput(payload);
+        this.lockstepEngine.handleIncomingRemoteInput(frame, inputMask);
+      }
+    });
+
+    this.signaling.on("netplay-sync-state", (data) => {
+      if (!this.peer.isConnected()) {
+        const payload = data.payload;
+        if (this.peer.onStateData) {
+          const str = typeof payload === "string" ? payload : JSON.stringify(payload);
+          this.peer.onStateData(str);
+        }
       }
     });
   }
@@ -905,6 +927,7 @@ export class NetplayController {
     romBytes?: Uint8Array,
     romHash?: string
   ) {
+    this.isGameSyncInitiator = true;
     // 1. Pause local emulation
     this.emulator.isPaused = true;
 

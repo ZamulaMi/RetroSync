@@ -12,9 +12,10 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
   onClose,
   onJoin,
 }) => {
-  const [digits, setDigits] = useState<string[]>(["", "", "", "", ""]);
+  const [digits, setDigits] = useState<string[]>(["", "", "", "", "", ""]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const inputRefs = [
+    useRef<HTMLInputElement>(null),
     useRef<HTMLInputElement>(null),
     useRef<HTMLInputElement>(null),
     useRef<HTMLInputElement>(null),
@@ -25,7 +26,7 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
   // Auto focus first input on open
   useEffect(() => {
     if (isOpen) {
-      setDigits(["", "", "", "", ""]);
+      setDigits(["", "", "", "", "", ""]);
       setErrorMsg(null);
       setTimeout(() => {
         inputRefs[0].current?.focus();
@@ -53,7 +54,7 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
     setDigits(next);
 
     // Auto advance if digit entered
-    if (sanitized && index < 4) {
+    if (sanitized && index < 5) {
       inputRefs[index + 1].current?.focus();
     }
   };
@@ -65,9 +66,9 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
       }
     } else if (e.key === "ArrowLeft" && index > 0) {
       inputRefs[index - 1].current?.focus();
-    } else if (e.key === "ArrowRight" && index < 4) {
+    } else if (e.key === "ArrowRight" && index < 5) {
       inputRefs[index + 1].current?.focus();
-    } else if (e.key === "Enter" && fullNumber.length === 5) {
+    } else if (e.key === "Enter" && fullNumber.length === 6) {
       handleSubmit();
     }
   };
@@ -76,19 +77,19 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
     // Check if it's a URL or formatted text
     let text = str.trim();
     if (text.includes("num=") || text.includes("number=")) {
-      const match = text.match(/(?:num|number)=([0-9]{5})/i);
+      const match = text.match(/(?:num|number)=([0-9]{6})/i);
       if (match) text = match[1];
     }
     const clean = text.replace(/[^0-9]/g, "");
     const next = [...digits];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       const targetIdx = startIndex + i;
-      if (targetIdx < 5 && i < clean.length) {
+      if (targetIdx < 6 && i < clean.length) {
         next[targetIdx] = clean[i];
       }
     }
     setDigits(next);
-    const lastFilled = Math.min(4, startIndex + clean.length);
+    const lastFilled = Math.min(5, startIndex + clean.length);
     inputRefs[lastFilled].current?.focus();
   };
 
@@ -110,8 +111,8 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
   };
 
   const handleSubmit = () => {
-    if (fullNumber.length !== 5) {
-      setErrorMsg("Номер кімнати має містити рівно 5 цифр (від 10000 до 99999).");
+    if (fullNumber.length !== 6) {
+      setErrorMsg("Номер кімнати має містити рівно 6 цифр (від 100000 до 999999).");
       return;
     }
     onJoin(fullNumber);
@@ -137,11 +138,11 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
                 Вхід за номером кімнати
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono">
-                  5 цифр
+                  6 цифр
                 </span>
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Окреме вікно для введення числового 5-значного номера
+                Окреме вікно для введення числового 6-значного номера
               </p>
             </div>
           </div>
@@ -158,12 +159,12 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
         <div className="p-6 space-y-5">
           <div className="text-center">
             <p className="text-xs text-slate-300">
-              Введіть 5 цифр у віконця нижче або вставте номер кімнати:
+              Введіть 6 цифр у віконця нижче або вставте номер кімнати:
             </p>
           </div>
 
-          {/* 5 Separate Segmented Input Windows */}
-          <div className="flex justify-center gap-2.5">
+          {/* 6 Separate Segmented Input Windows */}
+          <div className="flex justify-center gap-2">
             {digits.map((digit, index) => (
               <input
                 key={index}
@@ -178,7 +179,7 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
                 onKeyDown={(e) => handleKeyDown(index, e)}
                 onPaste={handlePaste}
                 autoComplete="off"
-                className={`w-12 h-16 text-2xl font-mono font-black text-center rounded-xl border-2 transition-all outline-none shadow-inner ${
+                className={`w-11 h-14 text-xl font-mono font-black text-center rounded-xl border-2 transition-all outline-none shadow-inner ${
                   digit
                     ? "bg-emerald-950/60 border-emerald-400 text-white shadow-emerald-900/30 scale-105"
                     : "bg-slate-950/70 border-slate-700 text-slate-400 focus:border-emerald-500 focus:bg-slate-900"
@@ -209,7 +210,7 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
           <button
             id="submit-join-by-number-btn"
             type="button"
-            disabled={fullNumber.length !== 5}
+            disabled={fullNumber.length !== 6}
             onClick={handleSubmit}
             className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-98"
           >

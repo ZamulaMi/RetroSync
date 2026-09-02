@@ -231,6 +231,14 @@ export class UniversalEmulator {
     return this.nesCore.computeStateHash();
   }
 
+  public setPrngSeed(seed: number) {
+    this.nesCore.setPrngSeed(seed);
+  }
+
+  public getPrngSeed(): number {
+    return this.nesCore.getPrngSeed();
+  }
+
   public createSaveState(slot: number): EmulationSaveState | null {
     if (!this.isLoaded) return null;
     const snapshot = this.saveSnapshot();

@@ -21,7 +21,6 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
     useRef<HTMLInputElement>(null),
   ];
 
-  // Auto focus first input on open
   useEffect(() => {
     if (isOpen) {
       setChars(["", "", "", ""]);
@@ -38,12 +37,10 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
 
   const handleCharChange = (index: number, val: string) => {
     setErrorMsg(null);
-    // Sanitize to alphanumeric
     const sanitized = val.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
 
     if (sanitized.length > 1) {
-      // Pasted or multiple characters typed
-      applyString(sanitized, index);
+      applyCodeString(sanitized, index);
       return;
     }
 
@@ -51,7 +48,6 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
     next[index] = sanitized;
     setChars(next);
 
-    // Auto advance if character entered
     if (sanitized && index < 3) {
       inputRefs[index + 1].current?.focus();
     }
@@ -71,11 +67,10 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
     }
   };
 
-  const applyString = (str: string, startIndex: number = 0) => {
-    // Check if it's a URL
+  const applyCodeString = (str: string, startIndex: number = 0) => {
     let text = str.trim();
-    if (text.includes("room=") || text.includes("code=")) {
-      const match = text.match(/(?:room|code)=([a-zA-Z0-9]{4})/i);
+    if (text.includes("code=")) {
+      const match = text.match(/code=([a-zA-Z0-9]{4})/i);
       if (match) text = match[1];
     }
     const clean = text.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
@@ -94,14 +89,14 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
   const handlePaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
     const pasted = e.clipboardData.getData("text");
-    applyString(pasted, 0);
+    applyCodeString(pasted, 0);
   };
 
   const handlePasteFromClipboard = async () => {
     try {
       if (navigator.clipboard && navigator.clipboard.readText) {
         const text = await navigator.clipboard.readText();
-        applyString(text, 0);
+        applyCodeString(text, 0);
       }
     } catch {
       setErrorMsg("Буфер обміну недоступний. Вставте код клавішами Ctrl+V");
@@ -110,7 +105,7 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
 
   const handleSubmit = () => {
     if (fullCode.length !== 4) {
-      setErrorMsg("Код кімнати має містити рівно 4 знаки (літери або цифри).");
+      setErrorMsg("Код кімнати має містити рівно 4 символи (наприклад: A7X9).");
       return;
     }
     onJoin(fullCode);
@@ -127,7 +122,7 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
     >
       <div className="bg-slate-900 border border-indigo-500/40 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="bg-gradient-to-r from-indigo-900/60 to-slate-900 border-b border-indigo-500/30 p-4 flex items-center justify-between">
+        <div className="bg-gradient-to-r from-indigo-950/60 to-slate-900 border-b border-indigo-500/30 p-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-indigo-600/30 border border-indigo-500/50 text-indigo-300">
               <KeyRound className="w-5 h-5" />
@@ -135,12 +130,12 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
             <div>
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
                 Вхід за кодом кімнати
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-mono">
                   4 знаки
                 </span>
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Окреме вікно для введення літерно-цифрового коду
+                Окреме вікно для введення символьного 4-значного коду
               </p>
             </div>
           </div>
@@ -157,7 +152,7 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
         <div className="p-6 space-y-5">
           <div className="text-center">
             <p className="text-xs text-slate-300">
-              Введіть 4 символи у віконця нижче або вставте код кімнати:
+              Введіть 4 символи коду у віконця нижче або вставте код кімнати:
             </p>
           </div>
 
@@ -175,7 +170,6 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
                 onKeyDown={(e) => handleKeyDown(index, e)}
                 onPaste={handlePaste}
                 autoComplete="off"
-                spellCheck="false"
                 className={`w-14 h-16 text-2xl font-mono font-black text-center uppercase rounded-xl border-2 transition-all outline-none shadow-inner ${
                   char
                     ? "bg-indigo-950/60 border-indigo-400 text-white shadow-indigo-900/30 scale-105"
@@ -212,8 +206,8 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
             className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-900/40 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-98"
           >
             <LogIn className="w-4 h-4" />
-            <span>Приєднатися за кодом</span>
-            {fullCode && <span className="font-mono text-amber-300 font-bold">[{fullCode}]</span>}
+            <span>Підключитися за кодом</span>
+            {fullCode && <span className="font-mono text-cyan-300 font-bold">#{fullCode}</span>}
             <ArrowRight className="w-4 h-4 ml-1" />
           </button>
         </div>

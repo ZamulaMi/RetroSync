@@ -172,22 +172,32 @@ export default function App() {
     }
   };
 
-  // ROM Loading & Switching handlers
+  // ROM Loading & Switching handlers (synchronizes to other player when in online room)
   const handleLoadRomBytes = (fileName: string, bytes: Uint8Array, hash: string, sys: ConsoleSystem) => {
-    const success = controller.emulator.loadRomFromBuffer(fileName, bytes);
-    if (success) {
-      setSystem(sys);
-      setGameTitle(fileName);
-      controller.updateGameInfo(fileName, sys, hash, bytes.byteLength);
+    if (gamePlayMode === "online" && room && room.participants.length > 1) {
+      // In online room: Initiate full 4-stage synchronization protocol with peer
+      controller.initiateGameSwitch(fileName, sys, undefined, bytes, hash);
+    } else {
+      const success = controller.emulator.loadRomFromBuffer(fileName, bytes);
+      if (success) {
+        setSystem(sys);
+        setGameTitle(fileName);
+        controller.updateGameInfo(fileName, sys, hash, bytes.byteLength);
+      }
     }
   };
 
   const handleLoadDemoRom = (demo: DemoROM) => {
-    const success = controller.emulator.loadDemoRom(demo.id);
-    if (success) {
-      setSystem(demo.system);
-      setGameTitle(demo.title);
-      controller.updateGameInfo(demo.title, demo.system, undefined, undefined, demo.id);
+    if (gamePlayMode === "online" && room && room.participants.length > 1) {
+      // In online room: Initiate full 4-stage synchronization protocol with peer
+      controller.initiateGameSwitch(demo.title, demo.system, demo.id);
+    } else {
+      const success = controller.emulator.loadDemoRom(demo.id);
+      if (success) {
+        setSystem(demo.system);
+        setGameTitle(demo.title);
+        controller.updateGameInfo(demo.title, demo.system, undefined, undefined, demo.id);
+      }
     }
   };
 
