@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { computeRomHash, detectSystemFromROM } from "../emulator/demoRoms";
 import { ConsoleSystem, ScreenFilter, ServerRomFile } from "../types";
+import { fetchAvailableRoms, loadRomBinaryBytes, saveLocalStoredRom, formatRomDisplayTitle } from "../utils/romCatalog";
 
 interface GameMenuModalProps {
   isOpen: boolean;
@@ -65,13 +66,10 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
   const fetchServerRoms = async () => {
     setIsLoadingRoms(true);
     try {
-      const res = await fetch("/api/roms");
-      if (res.ok) {
-        const data = await res.json();
-        setServerRoms(data);
-      }
+      const list = await fetchAvailableRoms();
+      setServerRoms(list);
     } catch (e) {
-      console.warn("Could not load /api/roms:", e);
+      console.warn("Could not load available ROMs:", e);
     } finally {
       setIsLoadingRoms(false);
     }
@@ -87,16 +85,13 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
 
   const handleLaunchServerRom = async (rom: ServerRomFile) => {
     try {
-      const res = await fetch(rom.url);
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const arrayBuffer = await res.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
+      const bytes = await loadRomBinaryBytes(rom);
       const hash = await computeRomHash(bytes);
       const detectedSystem = detectSystemFromROM(rom.filename, bytes);
       onLoadRomBytes(rom.filename, bytes, hash, detectedSystem);
       onClose();
     } catch (err: any) {
-      alert(`Не вдалося завантажити ROM: ${err.message}`);
+      alert(`Не вдалося завантажити гру: ${err.message}`);
     }
   };
 
@@ -110,6 +105,17 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
           const bytes = new Uint8Array(arrayBuffer);
           const hash = await computeRomHash(bytes);
           const sys = detectSystemFromROM(file.name, bytes);
+
+          const customRom: ServerRomFile = {
+            filename: file.name,
+            title: formatRomDisplayTitle(file.name),
+            system: sys,
+            size: bytes.byteLength,
+            url: `/roms/${encodeURIComponent(file.name)}`,
+            modifiedAt: Date.now(),
+          };
+          saveLocalStoredRom(customRom);
+
           onLoadRomBytes(file.name, bytes, hash, sys);
           onClose();
         }

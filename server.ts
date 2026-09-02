@@ -2,8 +2,20 @@ import express from "express";
 import http from "http";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer as createViteServer } from "vite";
+
+const getAppDir = () => {
+  try {
+    if (typeof __dirname !== "undefined") return __dirname;
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return process.cwd();
+  }
+};
+
+const appDir = getAppDir();
 
 interface RoomParticipant {
   ws: WebSocket;
@@ -63,14 +75,31 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
 
-  // ROM Storage Directory (/public/roms or /dist/roms in production)
-  const isProduction = process.env.NODE_ENV === "production";
-  const publicRomsDir = path.join(process.cwd(), "public", "roms");
-  const distRomsDir = path.join(process.cwd(), "dist", "roms");
-  const romsDir = isProduction && fs.existsSync(distRomsDir) ? distRomsDir : publicRomsDir;
+  // ROM Storage Directories (Checks public/roms, dist/roms, and root roms)
+  const candidateRomDirs = [
+    path.join(process.cwd(), "public", "roms"),
+    path.join(process.cwd(), "dist", "roms"),
+    path.join(process.cwd(), "roms"),
+    path.join(appDir, "public", "roms"),
+    path.join(appDir, "dist", "roms"),
+    path.join(appDir, "roms"),
+    path.join(appDir, "..", "public", "roms"),
+    path.join(appDir, "..", "dist", "roms"),
+  ];
 
-  if (!fs.existsSync(romsDir)) {
-    fs.mkdirSync(romsDir, { recursive: true });
+  // Helper to get all existing directories
+  const getExistingRomDirs = () => {
+    return Array.from(new Set(candidateRomDirs)).filter((d) => fs.existsSync(d));
+  };
+
+  // Primary directory for saving uploaded ROMs
+  const primaryUploadDir = path.join(process.cwd(), "public", "roms");
+  if (!fs.existsSync(primaryUploadDir)) {
+    try {
+      fs.mkdirSync(primaryUploadDir, { recursive: true });
+    } catch (e) {
+      console.warn("Could not create primary ROM upload dir:", e);
+    }
   }
 
   // REST API Routes
@@ -83,56 +112,63 @@ async function startServer() {
     });
   });
 
-  // Get ROMs located in /public/roms folder
+  // Get ROMs located in /public/roms or /dist/roms folders
   app.get("/api/roms", (_req, res) => {
     try {
-      if (!fs.existsSync(romsDir)) {
-        return res.json([]);
+      const dirs = getExistingRomDirs();
+      const romMap = new Map<string, any>();
+
+      for (const dir of dirs) {
+        try {
+          const files = fs.readdirSync(dir);
+          for (const filename of files) {
+            const lower = filename.toLowerCase();
+            if (
+              lower.endsWith(".nes") ||
+              lower.endsWith(".gba") ||
+              lower.endsWith(".gb") ||
+              lower.endsWith(".gbc") ||
+              lower.endsWith(".sfc") ||
+              lower.endsWith(".smc") ||
+              lower.endsWith(".bin")
+            ) {
+              if (!romMap.has(filename)) {
+                const fullPath = path.join(dir, filename);
+                const stat = fs.statSync(fullPath);
+                let system = "NES";
+                if (lower.endsWith(".gba")) system = "GBA";
+                else if (lower.endsWith(".gbc")) system = "GBC";
+                else if (lower.endsWith(".gb")) system = "GB";
+                else if (lower.endsWith(".sfc") || lower.endsWith(".smc")) system = "SNES";
+
+                let title = filename.replace(/\.[^/.]+$/, "").replace(/[_.-]+/g, " ");
+                if (filename.includes("Battle City")) title = "Battle City (1985)";
+                else if (filename.includes("Super Mario Bros")) title = "Super Mario Bros";
+
+                romMap.set(filename, {
+                  filename,
+                  title,
+                  system,
+                  size: stat.size,
+                  url: `/roms/${encodeURIComponent(filename)}`,
+                  modifiedAt: stat.mtimeMs,
+                });
+              }
+            }
+          }
+        } catch (dirErr) {
+          console.warn(`Error reading dir ${dir}:`, dirErr);
+        }
       }
-      const files = fs.readdirSync(romsDir);
-      const romFiles = files
-        .filter((f) => {
-          const lower = f.toLowerCase();
-          return (
-            lower.endsWith(".nes") ||
-            lower.endsWith(".gba") ||
-            lower.endsWith(".gb") ||
-            lower.endsWith(".gbc") ||
-            lower.endsWith(".sfc") ||
-            lower.endsWith(".smc") ||
-            lower.endsWith(".bin")
-          );
-        })
-        .map((filename) => {
-          const fullPath = path.join(romsDir, filename);
-          const stat = fs.statSync(fullPath);
-          const lower = filename.toLowerCase();
-          let system = "NES";
-          if (lower.endsWith(".gba")) system = "GBA";
-          else if (lower.endsWith(".gbc")) system = "GBC";
-          else if (lower.endsWith(".gb")) system = "GB";
-          else if (lower.endsWith(".sfc") || lower.endsWith(".smc")) system = "SNES";
 
-          // Clean title for display
-          const title = filename.replace(/\.[^/.]+$/, "").replace(/[_.-]+/g, " ");
-
-          return {
-            filename,
-            title,
-            system,
-            size: stat.size,
-            url: `/roms/${encodeURIComponent(filename)}`,
-            modifiedAt: stat.mtimeMs,
-          };
-        });
-
-      res.json(romFiles);
+      res.setHeader("Content-Type", "application/json");
+      res.json(Array.from(romMap.values()));
     } catch (err: any) {
       res.status(500).json({ error: "Failed to list ROMs", details: err.message });
     }
   });
 
-  // Upload a ROM file directly to /public/roms folder
+  // Upload a ROM file directly to ROM storage
   app.post("/api/roms/upload", (req, res) => {
     try {
       const { filename, base64Data } = req.body;
@@ -141,9 +177,19 @@ async function startServer() {
       }
 
       const safeFilename = path.basename(filename);
-      const targetPath = path.join(romsDir, safeFilename);
+      const targetPath = path.join(primaryUploadDir, safeFilename);
       const buffer = Buffer.from(base64Data, "base64");
       fs.writeFileSync(targetPath, buffer);
+
+      // Also copy to dist/roms if dist exists
+      const distRomsDir = path.join(process.cwd(), "dist", "roms");
+      if (fs.existsSync(distRomsDir)) {
+        try {
+          fs.writeFileSync(path.join(distRomsDir, safeFilename), buffer);
+        } catch (e) {
+          // ignore
+        }
+      }
 
       res.json({
         success: true,
@@ -156,8 +202,12 @@ async function startServer() {
     }
   });
 
-  // Statically serve ROM files
-  app.use("/roms", express.static(romsDir));
+  // Statically serve ROM files from all potential directories
+  candidateRomDirs.forEach((dir) => {
+    if (fs.existsSync(dir)) {
+      app.use("/roms", express.static(dir));
+    }
+  });
 
   // Get active public rooms
   app.get("/api/rooms", (_req, res) => {

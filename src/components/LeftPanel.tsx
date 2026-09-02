@@ -16,6 +16,7 @@ import {
 import { computeRomHash, detectSystemFromROM } from "../emulator/demoRoms";
 import { ConsoleSystem, DemoROM, PlayerRole, RoomInfo, ServerRomFile } from "../types";
 import { GameSyncState } from "../netplay/netplayController";
+import { fetchAvailableRoms, loadRomBinaryBytes, saveLocalStoredRom, formatRomDisplayTitle } from "../utils/romCatalog";
 
 interface LeftPanelProps {
   room: RoomInfo | null;
@@ -51,17 +52,14 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   const [isLoadingRoms, setIsLoadingRoms] = useState(false);
   const [isSavingToServer, setIsSavingToServer] = useState(false);
 
-  // Load server ROMs from /public/roms folder
+  // Load available ROMs from server or static catalog with fallback
   const fetchServerRoms = async () => {
     setIsLoadingRoms(true);
     try {
-      const res = await fetch("/api/roms");
-      if (res.ok) {
-        const data = await res.json();
-        setServerRoms(data);
-      }
+      const list = await fetchAvailableRoms();
+      setServerRoms(list);
     } catch (e) {
-      console.warn("Could not load /api/roms:", e);
+      console.warn("Could not load available ROMs:", e);
     } finally {
       setIsLoadingRoms(false);
     }
@@ -73,10 +71,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
 
   const handleLaunchServerRom = async (rom: ServerRomFile) => {
     try {
-      const res = await fetch(rom.url);
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const arrayBuffer = await res.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
+      const bytes = await loadRomBinaryBytes(rom);
       const hash = await computeRomHash(bytes);
       const detectedSystem = detectSystemFromROM(rom.filename, bytes);
 
@@ -86,7 +81,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
         onLoadRomBytes(rom.filename, bytes, hash, detectedSystem);
       }
     } catch (err: any) {
-      alert(`Не вдалося завантажити ROM: ${err.message}`);
+      alert(`Не вдалося завантажити гру: ${err.message}`);
     }
   };
 
@@ -106,7 +101,18 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
           onLoadRomBytes(file.name, bytes, hash, system);
         }
 
-        // Auto-save or sync to /public/roms/ on server in background
+        // Save locally in client storage and attempt server sync
+        const customRom: ServerRomFile = {
+          filename: file.name,
+          title: formatRomDisplayTitle(file.name),
+          system,
+          size: bytes.byteLength,
+          url: `/roms/${encodeURIComponent(file.name)}`,
+          modifiedAt: Date.now(),
+        };
+        saveLocalStoredRom(customRom);
+
+        // Auto-save or sync to server in background if backend is active
         try {
           setIsSavingToServer(true);
           let binary = "";
@@ -122,11 +128,11 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
               base64Data,
             }),
           });
-          fetchServerRoms();
         } catch (err) {
-          console.warn("Auto-save to /public/roms folder failed:", err);
+          console.warn("Auto-save to server storage failed:", err);
         } finally {
           setIsSavingToServer(false);
+          fetchServerRoms();
         }
       }
     };
