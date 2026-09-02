@@ -497,19 +497,20 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
               onTouchCancel={(e) => handleButtonUp("b", e)}
               onPointerDown={(e) => handleButtonDown("b", e)}
               onPointerUp={(e) => handleButtonUp("b", e)}
-              className={`${sizeStyles.btnSize} rounded-full border-3 flex items-center justify-center transition-all active:scale-90 cursor-pointer shadow-2xl ${
+              className={`${sizeStyles.btnSize} shrink-0 rounded-full border-3 flex items-center justify-center cursor-pointer select-none ${
                 activeButtons.b
-                  ? "bg-rose-500 border-rose-100 text-white shadow-rose-500/80 scale-90"
-                  : "bg-gradient-to-b from-rose-500 via-rose-600 to-rose-700 border-rose-300/90 text-white hover:brightness-110"
+                  ? "bg-rose-700 border-rose-400 text-white"
+                  : "bg-gradient-to-b from-rose-500 via-rose-600 to-rose-700 border-rose-300/90 text-white hover:brightness-105"
               }`}
               style={{
+                transform: "none",
                 boxShadow: activeButtons.b
-                  ? "0 0 24px rgba(244, 63, 94, 0.9), inset 0 3px 6px rgba(0,0,0,0.5)"
-                  : "0 8px 16px rgba(0,0,0,0.6), inset 0 3px 4px rgba(255,255,255,0.4)",
+                  ? "inset 0 4px 8px rgba(0,0,0,0.65), 0 1px 2px rgba(0,0,0,0.4)"
+                  : "0 6px 14px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.35)",
               }}
               title="Button B"
             >
-              <span className="rotate-45 transform inline-block select-none">B</span>
+              <span className="rotate-45 transform inline-block select-none pointer-events-none">B</span>
             </button>
 
             {/* LARGE A BUTTON (Top-Right at 45°) */}
@@ -520,19 +521,20 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
               onTouchCancel={(e) => handleButtonUp("a", e)}
               onPointerDown={(e) => handleButtonDown("a", e)}
               onPointerUp={(e) => handleButtonUp("a", e)}
-              className={`${sizeStyles.btnSize} rounded-full border-3 flex items-center justify-center transition-all active:scale-90 cursor-pointer shadow-2xl ${
+              className={`${sizeStyles.btnSize} shrink-0 rounded-full border-3 flex items-center justify-center cursor-pointer select-none ${
                 activeButtons.a
-                  ? "bg-emerald-500 border-emerald-100 text-white shadow-emerald-500/80 scale-90"
-                  : "bg-gradient-to-b from-emerald-500 via-emerald-600 to-emerald-700 border-emerald-300/90 text-white hover:brightness-110"
+                  ? "bg-emerald-700 border-emerald-400 text-white"
+                  : "bg-gradient-to-b from-emerald-500 via-emerald-600 to-emerald-700 border-emerald-300/90 text-white hover:brightness-105"
               }`}
               style={{
+                transform: "none",
                 boxShadow: activeButtons.a
-                  ? "0 0 24px rgba(16, 185, 129, 0.9), inset 0 3px 6px rgba(0,0,0,0.5)"
-                  : "0 8px 16px rgba(0,0,0,0.6), inset 0 3px 4px rgba(255,255,255,0.4)",
+                  ? "inset 0 4px 8px rgba(0,0,0,0.65), 0 1px 2px rgba(0,0,0,0.4)"
+                  : "0 6px 14px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.35)",
               }}
               title="Button A"
             >
-              <span className="rotate-45 transform inline-block select-none">A</span>
+              <span className="rotate-45 transform inline-block select-none pointer-events-none">A</span>
             </button>
           </div>
         </div>

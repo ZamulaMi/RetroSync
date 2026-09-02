@@ -307,6 +307,7 @@ export default function App() {
           <EmulatorView
             controller={controller}
             system={system}
+            currentTitle={gameTitle}
             filter={screenFilter}
             onSaveState={handleSaveState}
             onLoadState={handleLoadState}
