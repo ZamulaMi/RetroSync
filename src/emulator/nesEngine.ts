@@ -97,12 +97,19 @@ export class NesEmulator {
     // Initialize JSNES
     this.nes = new jsnes.NES({
       onFrame: (buffer: Uint32Array) => {
-        // buffer from JSNES contains 256*240 pixel integers in native 0x00BBGGRR format
-        // In 32-bit Little-Endian Canvas ImageData (ABGR layout: 0xAABBGGRR),
-        // adding 0xFF000000 alpha maps 1:1 perfectly to correct screen colors.
+        // JSNES outputs 256x240 pixel integers in 0x00RRGGBB format: (R << 16) | (G << 8) | B
+        // HTML5 Canvas ImageData uses a little-endian byte array [R, G, B, A]
+        // In a little-endian 32-bit integer, Byte 0 (bits 0..7) is Red and Byte 2 (bits 16..23) is Blue.
+        // Therefore, we convert 0x00RRGGBB to little-endian 0xAABBGGRR:
+        // Byte 0 = R, Byte 1 = G, Byte 2 = B, Byte 3 = 0xFF (Alpha)
         const len = buffer.length;
         for (let i = 0; i < len; i++) {
-          this.frameBuffer32[i] = 0xff000000 | buffer[i];
+          const val = buffer[i];
+          this.frameBuffer32[i] =
+            0xff000000 |
+            ((val & 0xff) << 16) |
+            (val & 0x00ff00) |
+            ((val >> 16) & 0xff);
         }
       },
       onAudioSample: (left: number, right: number) => {
