@@ -27,6 +27,7 @@ import {
   ScreenFilter,
 } from "./types";
 import { DEMO_ROMS } from "./emulator/demoRoms";
+import { parseRoomIdentifier } from "./utils/roomUtils";
 
 export default function App() {
   const controller = useMemo(() => new NetplayController(), []);
@@ -49,6 +50,10 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [p2pConnected, setP2pConnected] = useState<boolean>(false);
   const [matchmakingStatus, setMatchmakingStatus] = useState<MatchmakingStatus>("idle");
+  const [statusToast, setStatusToast] = useState<{
+    message: string;
+    type: "info" | "success" | "warning" | "error";
+  } | null>(null);
 
   // Game Resynchronization Workflow State
   const [syncState, setSyncState] = useState<GameSyncState>({
@@ -112,6 +117,13 @@ export default function App() {
       setMatchmakingStatus(status);
     };
 
+    controller.onStatusMessage = (message, type) => {
+      setStatusToast({ message, type: type || "info" });
+      setTimeout(() => {
+        setStatusToast((curr) => (curr?.message === message ? null : curr));
+      }, 4500);
+    };
+
     controller.onGameSyncUpdate = (newSyncState) => {
       setSyncState({ ...newSyncState });
       if (newSyncState.targetGameTitle) {
@@ -125,16 +137,15 @@ export default function App() {
     // Load initial 2-player demo ROM
     controller.emulator.loadDemoRom("nes-netplay-arena-2p");
 
-    // Check URL parameters for direct room join: ?code=XYZ, ?num=12345, or ?room=XYZ
-    const urlParams = new URLSearchParams(window.location.search);
-    const joinTarget =
-      urlParams.get("code") || urlParams.get("num") || urlParams.get("room");
+    // Check URL parameters for direct room join: ?code=XYZ, ?num=12345, ?room=XYZ, or hash fragments
+    const joinTarget = parseRoomIdentifier(window.location.href);
     if (joinTarget) {
       setGamePlayMode("online");
       controller.gamePlayMode = "online";
+      controller.signaling.connect();
       setTimeout(() => {
         controller.joinRoom(joinTarget);
-      }, 500);
+      }, 400);
     }
 
     return () => {
@@ -294,8 +305,41 @@ export default function App() {
   return (
     <div
       id="app-root-container"
-      className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white"
+      className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white relative"
     >
+      {/* Dynamic Status Toast Notification */}
+      {statusToast && (
+        <div
+          id="status-toast-notification"
+          className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl border text-xs font-semibold shadow-2xl flex items-center gap-2.5 backdrop-blur-md transition-all ${
+            statusToast.type === "error"
+              ? "bg-rose-950/95 border-rose-500/80 text-rose-200"
+              : statusToast.type === "warning"
+              ? "bg-amber-950/95 border-amber-500/80 text-amber-200"
+              : statusToast.type === "success"
+              ? "bg-emerald-950/95 border-emerald-500/80 text-emerald-200"
+              : "bg-slate-900/95 border-indigo-500/80 text-indigo-200"
+          }`}
+        >
+          <span>
+            {statusToast.type === "error"
+              ? "⚠️"
+              : statusToast.type === "warning"
+              ? "⚡"
+              : statusToast.type === "success"
+              ? "✅"
+              : "ℹ️"}
+          </span>
+          <span className="leading-snug">{statusToast.message}</span>
+          <button
+            onClick={() => setStatusToast(null)}
+            className="ml-2 text-slate-400 hover:text-white transition-colors cursor-pointer text-sm"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Top Header */}
       <Header
         gamePlayMode={gamePlayMode}

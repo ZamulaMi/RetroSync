@@ -73,54 +73,107 @@ export function parseRoomIdentifier(input: string): string {
   if (!input) return "";
   let text = input.trim();
 
-  // 1. URL search params or query strings
+  // 1. URL search params or query strings (case-insensitive key inspection)
   if (text.includes("?")) {
     try {
       const queryPart = text.split("?")[1] || "";
       const searchParams = new URLSearchParams(queryPart.split("#")[0]);
-      const matchedParam =
-        searchParams.get("room") ||
-        searchParams.get("code") ||
-        searchParams.get("num") ||
-        searchParams.get("id");
-      if (matchedParam) {
-        text = matchedParam;
+      let matched = "";
+      for (const [key, value] of searchParams.entries()) {
+        const lower = key.toLowerCase();
+        if (["code", "room", "num", "id", "roomid", "number"].includes(lower)) {
+          matched = value;
+          break;
+        }
+      }
+      if (matched) {
+        text = matched;
       }
     } catch {
       // Fallback to regex
     }
   }
 
-  // 2. Hash fragment parsing (#room=BC85 or #/room/BC85 or #852401)
+  // 2. Hash fragment parsing (#room=BC85 or #/room/BC85 or #852401 or #BC85)
   if (text.includes("#")) {
     const hashPart = text.split("#")[1] || "";
-    const hashMatch = hashPart.match(/(?:room|code|num|id)=([a-zA-Z0-9_-]+)/i);
+    const hashMatch = hashPart.match(/(?:room|code|num|id|number)=([a-zA-Z0-9_-]+)/i);
     if (hashMatch && hashMatch[1]) {
       text = hashMatch[1];
     } else {
-      const pathMatch = hashPart.match(/(?:^|\/)([a-zA-Z0-9]{4,10})$/);
-      if (pathMatch && pathMatch[1]) {
-        text = pathMatch[1];
+      const directCodeMatch = hashPart.match(/(?:^|\/)([a-zA-Z0-9]{4,10})$/);
+      if (directCodeMatch && directCodeMatch[1]) {
+        text = directCodeMatch[1];
       }
     }
   }
 
-  // 3. Query string match (e.g. "room=BC85")
-  const keyValMatch = text.match(/(?:room|code|num|id)=([a-zA-Z0-9_-]+)/i);
+  // 3. Query string pattern (e.g. "room=BC85" or "code=BC85" or "num=852401")
+  const keyValMatch = text.match(/(?:room|code|num|id|number)=([a-zA-Z0-9_-]+)/i);
   if (keyValMatch && keyValMatch[1]) {
     text = keyValMatch[1];
   }
 
-  // 4. URL path segment (/room/BC85)
-  const pathMatch = text.match(/\/room\/([a-zA-Z0-9_-]+)/i);
+  // 4. URL path segment (/room/BC85 or /code/BC85)
+  const pathMatch = text.match(/\/(?:room|code|num)\/([a-zA-Z0-9_-]+)/i);
   if (pathMatch && pathMatch[1]) {
     text = pathMatch[1];
   }
 
   // 5. Clean up leading # and whitespace
-  const cleaned = text.replace(/^#/, "").trim().toUpperCase();
+  let cleaned = text.replace(/^#/, "").trim().toUpperCase();
+
+  // If the result still contains URL protocol, slashes, or query fragments, it is an unparseable URL
+  if (
+    cleaned.startsWith("HTTP://") ||
+    cleaned.startsWith("HTTPS://") ||
+    cleaned.includes("/") ||
+    cleaned.includes("?") ||
+    cleaned.includes("&") ||
+    cleaned.includes("=")
+  ) {
+    return "";
+  }
+
+  // A valid room code is 3-6 chars (e.g. BC85, AREN) or a 5-8 digit number (e.g. 852401)
+  if (!/^[A-Z0-9_-]{3,12}$/.test(cleaned)) {
+    return "";
+  }
 
   return cleaned;
+}
+
+/**
+ * Detects the kind of room identifier provided by the user
+ */
+export function detectRoomIdentifierType(
+  input: string
+): "code" | "number" | "url" | "invalid" {
+  const trimmed = (input || "").trim();
+  if (!trimmed) return "invalid";
+
+  const parsed = parseRoomIdentifier(trimmed);
+  if (!parsed) return "invalid";
+
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.includes("?") ||
+    trimmed.includes("/") ||
+    trimmed.includes("#")
+  ) {
+    return "url";
+  }
+
+  if (/^[0-9]{5,8}$/.test(parsed)) {
+    return "number";
+  }
+
+  if (/^[A-Z0-9]{3,6}$/i.test(parsed)) {
+    return "code";
+  }
+
+  return "code";
 }
 
 /**
@@ -131,6 +184,7 @@ export function buildRoomShareUrl(roomId: string, roomNumber?: string): string {
   const origin = window.location.origin;
   const pathname = window.location.pathname || "/";
   const params = new URLSearchParams();
+  params.set("code", roomId);
   params.set("room", roomId);
   if (roomNumber) {
     params.set("num", roomNumber);

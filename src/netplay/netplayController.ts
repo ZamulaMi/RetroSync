@@ -156,7 +156,7 @@ export class NetplayController {
   public onMetricsUpdate: ((metrics: NetplayMetrics) => void) | null = null;
   public onRoomUpdate: ((room: RoomInfo | null) => void) | null = null;
   public onChatMessage: ((msg: ChatMessage) => void) | null = null;
-  public onStatusMessage: ((msg: string, type?: "info" | "success" | "warn") => void) | null = null;
+  public onStatusMessage: ((msg: string, type?: "info" | "success" | "warn" | "warning" | "error") => void) | null = null;
   public onMatchmakingStatusChange: ((status: MatchmakingStatus, details?: Record<string, unknown>) => void) | null = null;
   public onGameSyncUpdate: ((state: GameSyncState) => void) | null = null;
   public isGameSyncInitiator: boolean = false;
@@ -327,6 +327,26 @@ export class NetplayController {
             this.peer.connectToPeer(otherParticipant.peerId);
           }, 300);
         }
+      }
+    });
+
+    this.signaling.on("matchmaking-status", (data) => {
+      const status = (data.status as MatchmakingStatus) || "idle";
+      this.matchmakingStatus = status;
+      if (this.onMatchmakingStatusChange) {
+        this.onMatchmakingStatusChange(status, data);
+      }
+      if (status === "timeout" && data.message) {
+        if (this.onStatusMessage) {
+          this.onStatusMessage(data.message as string, "warning");
+        }
+      }
+    });
+
+    this.signaling.on("error", (data) => {
+      const msg = (data.message as string) || "Помилка мережевого з'єднання";
+      if (this.onStatusMessage) {
+        this.onStatusMessage(msg, "error");
       }
     });
 
@@ -681,12 +701,29 @@ export class NetplayController {
   }
 
   public async joinRoom(roomId: string) {
-    const cleanId = roomId.trim().toUpperCase().replace(/^#/, "");
+    const raw = (roomId || "").trim();
+    const cleanId = parseRoomIdentifier(raw) || raw.toUpperCase().replace(/^#/, "").trim();
+
+    if (!cleanId) {
+      if (this.onStatusMessage) {
+        this.onStatusMessage(
+          "Невірний ідентифікатор кімнати. Введіть 4-значний код (напр. BC85), 6-значний номер або повне посилання.",
+          "error"
+        );
+      }
+      return;
+    }
+
+    // Always send over signaling (signaling client buffers in sendQueue if socket is still opening)
     this.signaling.send({
       type: "join-room",
       roomId: cleanId,
       username: this.myUsername,
     });
+
+    if (this.onStatusMessage) {
+      this.onStatusMessage(`Підключення до кімнати "${cleanId}"...`, "info");
+    }
 
     if (!this.signaling.isSocketConnected()) {
       try {
@@ -701,9 +738,6 @@ export class NetplayController {
             this.rollbackEngine.setLocalRole("player2");
             this.lockstepEngine.setLocalRole("player2");
             if (this.onRoomUpdate) this.onRoomUpdate(this.currentRoom);
-            if (this.onStatusMessage) {
-              this.onStatusMessage(`Приєднано до кімнати #${roomData.roomNumber || roomData.id}!`, "success");
-            }
           }
         }
       } catch {

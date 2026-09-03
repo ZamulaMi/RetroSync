@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { KeyRound, LogIn, X, Clipboard, ArrowRight } from "lucide-react";
+import { parseRoomIdentifier } from "../utils/roomUtils";
 
 interface JoinByCodeModalProps {
   isOpen: boolean;
@@ -68,12 +69,16 @@ export const JoinByCodeModal: React.FC<JoinByCodeModalProps> = ({
   };
 
   const applyCodeString = (str: string, startIndex: number = 0) => {
-    let text = str.trim();
-    if (text.includes("code=")) {
-      const match = text.match(/code=([a-zA-Z0-9]{4})/i);
-      if (match) text = match[1];
+    const parsed = parseRoomIdentifier(str);
+    const clean = parsed || str.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+
+    // If a 6-digit room number was pasted into this modal, join directly
+    if (clean.length === 6 && /^\d{6}$/.test(clean)) {
+      onJoin(clean);
+      onClose();
+      return;
     }
-    const clean = text.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+
     const next = [...chars];
     for (let i = 0; i < 4; i++) {
       const targetIdx = startIndex + i;

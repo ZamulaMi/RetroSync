@@ -108,6 +108,10 @@ export class SignalingClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(payload);
     } else {
+      // If socket is closed or not initialized, initiate connection
+      if (!this.ws || this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
+        this.connect();
+      }
       // Buffer outgoing packets until socket is ready
       if (this.sendQueue.length < 50) {
         this.sendQueue.push(payload);

@@ -102,7 +102,7 @@ export interface MatchmakingCriteria {
   username?: string;
 }
 
-export type MatchmakingStatus = "idle" | "searching" | "matched" | "connecting";
+export type MatchmakingStatus = "idle" | "searching" | "matched" | "connecting" | "timeout";
 
 export interface MatchmakingStats {
   queueLength: number;

@@ -23,6 +23,7 @@ import {
   Hash,
   KeyRound,
   Edit3,
+  Clipboard,
 } from "lucide-react";
 import {
   ChatMessage,
@@ -42,6 +43,11 @@ import { VoiceVideoChat } from "./VoiceVideoChat";
 import { WebRTCVideoChat } from "../netplay/videoChat";
 import { Local2PlayerPanel } from "./Local2PlayerPanel";
 import { NetplayController } from "../netplay/netplayController";
+import {
+  parseRoomIdentifier,
+  buildRoomShareUrl,
+  detectRoomIdentifierType,
+} from "../utils/roomUtils";
 
 const PRESET_GAMES_BY_SYSTEM: Record<ConsoleSystem, Array<{ id: string; title: string }>> = {
   NES: [
@@ -275,9 +281,11 @@ export const RightPanel: React.FC<RightPanelProps> = ({
     setTimeout(() => setCopiedNumber(false), 2000);
   };
 
+  const [smartJoinInput, setSmartJoinInput] = useState("");
+
   const handleCopyInviteLink = () => {
     if (!room) return;
-    const url = `${window.location.origin}?room=${room.id}`;
+    const url = buildRoomShareUrl(room.id, room.roomNumber);
     navigator.clipboard.writeText(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
@@ -285,7 +293,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 
   const handleShare = async () => {
     if (!room) return;
-    const url = `${window.location.origin}?room=${room.id}`;
+    const url = buildRoomShareUrl(room.id, room.roomNumber);
     if (navigator.share) {
       try {
         await navigator.share({
@@ -301,25 +309,40 @@ export const RightPanel: React.FC<RightPanelProps> = ({
     }
   };
 
+  const handlePasteJoinFromClipboard = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          setSmartJoinInput(text);
+          const parsed = parseRoomIdentifier(text);
+          if (parsed) {
+            setJoinError(null);
+          }
+        }
+      }
+    } catch {
+      setJoinError("Не вдалося отримати текст з буфера. Вставте за допомогою Ctrl+V");
+    }
+  };
 
   const handleJoinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setJoinError(null);
 
-    const cleanCode = joinCode.trim().toUpperCase().replace(/^#/, "");
-    const cleanNumber = joinNumber.trim().replace(/^#/, "");
-
-    if (cleanCode) {
-      onJoinRoom(cleanCode);
+    const candidate = smartJoinInput.trim() || joinCode.trim() || joinNumber.trim();
+    if (!candidate) {
+      setJoinError("Введіть 4-значний код, 6-значний номер або повне посилання на кімнату.");
       return;
     }
 
-    if (cleanNumber) {
-      onJoinRoom(cleanNumber);
+    const parsed = parseRoomIdentifier(candidate);
+    if (parsed) {
+      onJoinRoom(parsed);
       return;
     }
 
-    setJoinError("Введіть 4-символьний код або номер кімнати у відповідне поле");
+    setJoinError("Не вдалося розпізнати кімнату. Перевірте код (напр. BC85), номер (напр. 852401) або посилання.");
   };
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -797,76 +820,123 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                   {roomActionTab === "join" && (
                     <form onSubmit={handleJoinSubmit} className="flex flex-col gap-3">
                       {joinError && (
-                        <div className="p-2 bg-rose-950/60 border border-rose-500/50 rounded-lg text-rose-300 text-[11px]">
-                          ⚠️ {joinError}
+                        <div className="p-2 bg-rose-950/60 border border-rose-500/50 rounded-lg text-rose-300 text-[11px] flex items-center gap-1.5">
+                          <span>⚠️</span>
+                          <span>{joinError}</span>
                         </div>
                       )}
 
-                      {/* Field 1: Код кімнати */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-[11px] text-slate-300 font-bold flex items-center gap-1">
-                            <KeyRound className="w-3 h-3 text-amber-400" />
-                            <span>1. Код кімнати (4 символи):</span>
+                      {/* Primary: Smart Input (Code, Number, or Link) */}
+                      <div className="bg-slate-900/90 border border-slate-700/80 rounded-xl p-3 flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                            <Link className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Код, Номер або Посилання:</span>
                           </label>
-                          <span className="text-[10px] text-slate-500 font-mono">напр. BC85</span>
+                          <button
+                            type="button"
+                            onClick={handlePasteJoinFromClipboard}
+                            className="text-[10px] text-indigo-300 hover:text-white bg-indigo-900/40 hover:bg-indigo-800/60 px-2 py-0.5 rounded border border-indigo-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Вставити з буфера обміну"
+                          >
+                            <Clipboard className="w-3 h-3" /> Вставити
+                          </button>
                         </div>
+
                         <input
                           type="text"
-                          maxLength={8}
-                          value={joinCode}
+                          value={smartJoinInput}
                           onChange={(e) => {
                             setJoinError(null);
-                            let val = e.target.value.trim().toUpperCase();
-                            if (val.includes("ROOM=")) {
-                              const match = val.match(/ROOM=([A-Z0-9_-]+)/);
-                              if (match && match[1]) val = match[1];
-                            }
-                            setJoinCode(val.replace(/^#/, ""));
+                            setSmartJoinInput(e.target.value);
                           }}
-                          placeholder="Введіть 4-значний код (напр. BC85)"
-                          className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-lg px-3 py-2 text-xs font-mono font-bold text-amber-400 uppercase tracking-wider focus:outline-none"
+                          placeholder="BC85, 852401 або вставте посилання"
+                          className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-400 rounded-lg px-3 py-2 text-xs font-mono font-bold text-white tracking-wider focus:outline-none placeholder:text-slate-600"
                         />
-                      </div>
 
-                      {/* Field 2: Номер кімнати */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-[11px] text-slate-300 font-bold flex items-center gap-1">
-                            <Hash className="w-3 h-3 text-indigo-400" />
-                            <span>2. Номер кімнати (6 цифр):</span>
-                          </label>
-                          <span className="text-[10px] text-slate-500 font-mono">напр. 852401</span>
-                        </div>
-                        <input
-                          type="text"
-                          maxLength={10}
-                          value={joinNumber}
-                          onChange={(e) => {
-                            setJoinError(null);
-                            let val = e.target.value.trim();
-                            if (val.includes("ROOM=")) {
-                              const match = val.match(/ROOM=([A-Z0-9_-]+)/);
-                              if (match && match[1]) val = match[1];
-                            }
-                            setJoinNumber(val.replace(/^#/, ""));
-                          }}
-                          placeholder="Введіть 6-значний номер (напр. 852401)"
-                          className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs font-mono font-bold text-indigo-300 tracking-wider focus:outline-none"
-                        />
+                        {smartJoinInput.trim() && (
+                          <div className="flex items-center gap-1.5 text-[11px]">
+                            {(() => {
+                              const detected = detectRoomIdentifierType(smartJoinInput);
+                              const parsed = parseRoomIdentifier(smartJoinInput);
+                              if (detected === "invalid" || !parsed) {
+                                return (
+                                  <span className="text-rose-400 font-medium">
+                                    ❌ Не розпізнано. Перевірте формат.
+                                  </span>
+                                );
+                              }
+                              if (detected === "url") {
+                                return (
+                                  <span className="text-emerald-400 font-medium flex items-center gap-1">
+                                    <Check className="w-3 h-3" /> Посилання розпізнано (Кімната: <b>{parsed}</b>)
+                                  </span>
+                                );
+                              }
+                              if (detected === "number") {
+                                return (
+                                  <span className="text-indigo-300 font-medium flex items-center gap-1">
+                                    <Check className="w-3 h-3" /> Номер кімнати: <b>#{parsed}</b>
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span className="text-amber-400 font-medium flex items-center gap-1">
+                                  <Check className="w-3 h-3" /> Код кімнати: <b>{parsed}</b>
+                                </span>
+                              );
+                            })()}
+                          </div>
+                        )}
                       </div>
-
-                      <p className="text-[11px] text-slate-400 bg-slate-950/70 p-2 rounded-lg border border-slate-800">
-                        Введіть код або номер кімнати, наданий іншим гравцем, та натисніть «Увійти в кімнату».
-                      </p>
 
                       <button
                         type="submit"
                         id="join-room-submit-button"
-                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
                       >
                         <LogIn className="w-4 h-4" /> Увійти в кімнату
                       </button>
+
+                      {/* Or enter explicitly into separate fields */}
+                      <details className="text-[11px] text-slate-400 group">
+                        <summary className="cursor-pointer hover:text-slate-300 select-none flex items-center justify-between py-1">
+                          <span>Або ввести окремо код / номер вручну:</span>
+                          <span className="text-slate-500 text-[10px] group-open:rotate-180 transition-transform">▼</span>
+                        </summary>
+                        <div className="flex flex-col gap-2 pt-2 border-t border-slate-800/80 mt-1">
+                          <div>
+                            <span className="text-[10px] text-slate-400 flex items-center gap-1 mb-0.5">
+                              <KeyRound className="w-3 h-3 text-amber-400" /> Код кімнати (4 символи):
+                            </span>
+                            <input
+                              type="text"
+                              value={joinCode}
+                              onChange={(e) => {
+                                setJoinError(null);
+                                setJoinCode(e.target.value.trim().toUpperCase());
+                              }}
+                              placeholder="напр. BC85"
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-amber-400 uppercase tracking-wider focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 flex items-center gap-1 mb-0.5">
+                              <Hash className="w-3 h-3 text-indigo-400" /> Номер кімнати (6 цифр):
+                            </span>
+                            <input
+                              type="text"
+                              value={joinNumber}
+                              onChange={(e) => {
+                                setJoinError(null);
+                                setJoinNumber(e.target.value.trim());
+                              }}
+                              placeholder="напр. 852401"
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-indigo-300 tracking-wider focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      </details>
                     </form>
                   )}
                 </div>

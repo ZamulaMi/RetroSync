@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Hash, LogIn, X, Clipboard, ArrowRight } from "lucide-react";
+import { parseRoomIdentifier } from "../utils/roomUtils";
 
 interface JoinByNumberModalProps {
   isOpen: boolean;
@@ -74,13 +75,17 @@ export const JoinByNumberModal: React.FC<JoinByNumberModalProps> = ({
   };
 
   const applyNumberString = (str: string, startIndex: number = 0) => {
-    // Check if it's a URL or formatted text
-    let text = str.trim();
-    if (text.includes("num=") || text.includes("number=")) {
-      const match = text.match(/(?:num|number)=([0-9]{6})/i);
-      if (match) text = match[1];
+    const parsed = parseRoomIdentifier(str);
+    const candidate = parsed || str.trim();
+
+    // If a 4-character code was pasted into this number modal, join directly
+    if (/^[A-Z0-9]{4}$/i.test(candidate)) {
+      onJoin(candidate.toUpperCase());
+      onClose();
+      return;
     }
-    const clean = text.replace(/[^0-9]/g, "");
+
+    const clean = candidate.replace(/[^0-9]/g, "");
     const next = [...digits];
     for (let i = 0; i < 6; i++) {
       const targetIdx = startIndex + i;

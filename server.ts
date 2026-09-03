@@ -121,11 +121,14 @@ function parseRoomKey(raw: string): string {
     try {
       const queryPart = clean.split("?")[1] || "";
       const searchParams = new URLSearchParams(queryPart.split("#")[0]);
-      const matched =
-        searchParams.get("room") ||
-        searchParams.get("code") ||
-        searchParams.get("num") ||
-        searchParams.get("id");
+      let matched = "";
+      for (const [key, value] of searchParams.entries()) {
+        const lower = key.toLowerCase();
+        if (["code", "room", "num", "id", "roomid", "number"].includes(lower)) {
+          matched = value;
+          break;
+        }
+      }
       if (matched) clean = matched;
     } catch {
       // Fallback
@@ -135,7 +138,7 @@ function parseRoomKey(raw: string): string {
   // If hash contains param or code
   if (clean.includes("#")) {
     const hashPart = clean.split("#")[1] || "";
-    const hashMatch = hashPart.match(/(?:room|code|num|id)=([a-zA-Z0-9_-]+)/i);
+    const hashMatch = hashPart.match(/(?:room|code|num|id|number)=([a-zA-Z0-9_-]+)/i);
     if (hashMatch && hashMatch[1]) {
       clean = hashMatch[1];
     } else {
@@ -147,18 +150,32 @@ function parseRoomKey(raw: string): string {
   }
 
   // Query parameter pattern (e.g. room=BC85)
-  const matchParam = clean.match(/(?:room|code|num|id)=([a-zA-Z0-9_-]+)/i);
+  const matchParam = clean.match(/(?:room|code|num|id|number)=([a-zA-Z0-9_-]+)/i);
   if (matchParam && matchParam[1]) {
     clean = matchParam[1];
   }
 
-  // Path parameter pattern (/room/BC85)
-  const matchPath = clean.match(/\/room\/([a-zA-Z0-9_-]+)/i);
+  // Path parameter pattern (/room/BC85 or /code/BC85)
+  const matchPath = clean.match(/\/(?:room|code|num)\/([a-zA-Z0-9_-]+)/i);
   if (matchPath && matchPath[1]) {
     clean = matchPath[1];
   }
 
-  return clean.toUpperCase().replace(/^#/, "").trim();
+  const finalKey = clean.toUpperCase().replace(/^#/, "").trim();
+  if (
+    finalKey.startsWith("HTTP://") ||
+    finalKey.startsWith("HTTPS://") ||
+    finalKey.includes("/") ||
+    finalKey.includes("?") ||
+    finalKey.includes("&") ||
+    finalKey.includes("=")
+  ) {
+    return "";
+  }
+  if (!/^[A-Z0-9_-]{3,12}$/.test(finalKey)) {
+    return "";
+  }
+  return finalKey;
 }
 
 function findRoom(key: string): Room | undefined {
@@ -806,92 +823,39 @@ async function startServer() {
       }
     }
 
-    // 3. If waiting for >= 2.5 seconds, pair with intelligent Challenger Bot for instant action
+    // 3. Keep searching players informed and clean up stale connections
     for (const ticket of matchmakingQueue.values()) {
       if (ticket.ws.readyState !== WebSocket.OPEN) {
         matchmakingQueue.delete(ticket.peerId);
         continue;
       }
-      if (now - ticket.joinedAt >= 2500) {
+
+      // Timeout after 180 seconds (3 minutes) of searching
+      if (now - ticket.joinedAt >= 180000) {
         matchmakingQueue.delete(ticket.peerId);
+        try {
+          ticket.ws.send(
+            JSON.stringify({
+              type: "matchmaking-status",
+              status: "timeout",
+              message: "Час пошуку вичерпано. Зараз немає вільних суперників. Ви можете створити власну кімнату або спробувати пізніше.",
+            })
+          );
+        } catch {}
+        continue;
+      }
 
-        const chosenSys = ticket.consoleSystem !== "ANY" ? ticket.consoleSystem : "NES";
-        const fallback = SYSTEM_DEFAULT_GAMES[chosenSys] || SYSTEM_DEFAULT_GAMES.NES;
-        const matchRoomId = generateRoomCode();
-        const matchRoomNumber = generateRoomNumber();
-
-        const botNames = [
-          "RetroMaster [AI Bot]",
-          "PixelWarrior [Bot]",
-          "8-Bit Phantom [AI]",
-          "ArcadeDuelist [Bot]",
-          "CyberNinja [AI]",
-        ];
-        const botName = botNames[Math.floor(Math.random() * botNames.length)];
-
-        const newRoom: Room = {
-          id: matchRoomId,
-          roomNumber: matchRoomNumber,
-          name: `Quick Duel: ${ticket.username} vs ${botName}`,
-          hostId: ticket.peerId,
-          gameTitle: fallback.title,
-          gameId: fallback.id,
-          system: fallback.system,
-          netplayMode: ticket.netplayMode || "rollback",
-          frameDelay: 2,
-          isPrivate: false,
-          participants: new Map(),
-          createdAt: Date.now(),
-        };
-
-        const participantUser: RoomParticipant = {
-          ws: ticket.ws,
-          peerId: ticket.peerId,
-          username: ticket.username,
-          role: "player1",
-          isReady: true,
-          ping: 0,
-        };
-        newRoom.participants.set(ticket.peerId, participantUser);
-
-        const botPeerId = "bot_" + Math.random().toString(36).substring(2, 8);
-        const participantBot: RoomParticipant = {
-          ws: ticket.ws,
-          peerId: botPeerId,
-          username: botName,
-          role: "player2",
-          isReady: true,
-          ping: 18,
-        };
-        newRoom.participants.set(botPeerId, participantBot);
-
-        rooms.set(matchRoomId, newRoom);
-        roomsByNumber.set(matchRoomNumber, newRoom);
-        setSocketRoom(ticket.ws, matchRoomId, ticket.peerId, ticket.username);
-
+      // Periodically update client with active queue status and count
+      try {
         ticket.ws.send(
           JSON.stringify({
-            type: "match-found",
-            roomId: matchRoomId,
-            code: matchRoomId,
-            roomNumber: matchRoomNumber,
-            peerId: ticket.peerId,
-            role: "player1",
-            opponentName: botName,
-            isBotOpponent: true,
-            botPeerId,
-            gameId: fallback.id,
-            gameTitle: fallback.title,
-            system: fallback.system,
-            netplayMode: newRoom.netplayMode,
-            room: sanitizeRoom(newRoom),
+            type: "matchmaking-status",
+            status: "searching",
+            queueLength: matchmakingQueue.size,
+            searchDurationSeconds: Math.floor((now - ticket.joinedAt) / 1000),
           })
         );
-
-        console.log(
-          `[Matchmaking] Paired ${ticket.username} with AI challenger ${botName} in room ${matchRoomId}`
-        );
-      }
+      } catch {}
     }
   }
 
