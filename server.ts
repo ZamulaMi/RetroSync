@@ -27,8 +27,8 @@ interface RoomParticipant {
 }
 
 interface Room {
-  id: string; // 4-character code, e.g. "A7X9"
-  roomNumber: string; // 5-digit number, e.g. "48201"
+  id: string; // 4-character code, e.g. "BC85"
+  roomNumber: string; // 6-digit number, e.g. "852401"
   name: string;
   hostId: string;
   gameTitle: string;
@@ -43,6 +43,8 @@ interface Room {
   isPrivate: boolean;
   inviteToken?: string;
   supportedGames?: string[];
+  isPersistent?: boolean;
+  emptySince?: number;
 }
 
 interface MatchmakingTicket {
@@ -56,9 +58,28 @@ interface MatchmakingTicket {
   joinedAt: number;
 }
 
+interface SocketSession {
+  roomId: string | null;
+  peerId: string | null;
+  username: string;
+  isMatchmaking: boolean;
+}
+
 const rooms = new Map<string, Room>();
 const roomsByNumber = new Map<string, Room>();
 const matchmakingQueue = new Map<string, MatchmakingTicket>();
+const socketSessions = new Map<WebSocket, SocketSession>();
+
+function setSocketRoom(ws: WebSocket, roomId: string | null, peerId?: string | null, username?: string) {
+  let session = socketSessions.get(ws);
+  if (!session) {
+    session = { roomId: null, peerId: null, username: username || "Player", isMatchmaking: false };
+    socketSessions.set(ws, session);
+  }
+  session.roomId = roomId;
+  if (peerId !== undefined && peerId !== null) session.peerId = peerId;
+  if (username) session.username = username;
+}
 
 // Code and 6-digit number generators
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -85,26 +106,93 @@ function generateRoomNumber(): string {
   return num;
 }
 
+/**
+ * Normalizes input which can be:
+ * - full URL (https://domain.com/?room=BC85 or ?code=BC85 or ?num=852401)
+ * - hash url (https://domain.com/#852401 or #room=BC85)
+ * - code or number (#BC85, #852401, bc85, 852401)
+ */
+function parseRoomKey(raw: string): string {
+  if (!raw) return "";
+  let clean = raw.trim();
+
+  // If full URL with query
+  if (clean.includes("?")) {
+    try {
+      const queryPart = clean.split("?")[1] || "";
+      const searchParams = new URLSearchParams(queryPart.split("#")[0]);
+      const matched =
+        searchParams.get("room") ||
+        searchParams.get("code") ||
+        searchParams.get("num") ||
+        searchParams.get("id");
+      if (matched) clean = matched;
+    } catch {
+      // Fallback
+    }
+  }
+
+  // If hash contains param or code
+  if (clean.includes("#")) {
+    const hashPart = clean.split("#")[1] || "";
+    const hashMatch = hashPart.match(/(?:room|code|num|id)=([a-zA-Z0-9_-]+)/i);
+    if (hashMatch && hashMatch[1]) {
+      clean = hashMatch[1];
+    } else {
+      const pathMatch = hashPart.match(/(?:^|\/)([a-zA-Z0-9]{4,10})$/);
+      if (pathMatch && pathMatch[1]) {
+        clean = pathMatch[1];
+      }
+    }
+  }
+
+  // Query parameter pattern (e.g. room=BC85)
+  const matchParam = clean.match(/(?:room|code|num|id)=([a-zA-Z0-9_-]+)/i);
+  if (matchParam && matchParam[1]) {
+    clean = matchParam[1];
+  }
+
+  // Path parameter pattern (/room/BC85)
+  const matchPath = clean.match(/\/room\/([a-zA-Z0-9_-]+)/i);
+  if (matchPath && matchPath[1]) {
+    clean = matchPath[1];
+  }
+
+  return clean.toUpperCase().replace(/^#/, "").trim();
+}
+
 function findRoom(key: string): Room | undefined {
   if (!key) return undefined;
-  const cleanKey = key.trim().toUpperCase().replace(/^#/, "");
+  const cleanKey = parseRoomKey(key);
+  if (!cleanKey) return undefined;
+
   // 1. Direct match in 4-character code map
   if (rooms.has(cleanKey)) return rooms.get(cleanKey);
-  // 2. Direct match in 6-digit / numeric room map
+  // 2. Direct match in 6-digit numeric room map
   if (roomsByNumber.has(cleanKey)) return roomsByNumber.get(cleanKey);
   // 3. Scan all rooms (in case of aliases or case variance)
   for (const r of rooms.values()) {
-    if (r.id.toUpperCase() === cleanKey || r.roomNumber === cleanKey) {
+    if (
+      r.id.toUpperCase() === cleanKey ||
+      (r.roomNumber && r.roomNumber === cleanKey)
+    ) {
       return r;
     }
   }
   return undefined;
 }
 
-// Seed community rooms so global search is instantly responsive
+// Seed community rooms so global search and 1-click joins are instantly responsive
 function seedInitialLobbyRooms() {
-  if (rooms.size > 0) return;
-  const initialRooms: Array<{ id: string; num: string; name: string; gameTitle: string; gameId: string; system: string; mode: "rollback" | "lockstep" }> = [
+  const initialRooms: Array<{
+    id: string;
+    num: string;
+    name: string;
+    gameTitle: string;
+    gameId: string;
+    system: string;
+    mode: "rollback" | "lockstep";
+  }> = [
     {
       id: "BC85",
       num: "852401",
@@ -144,24 +232,32 @@ function seedInitialLobbyRooms() {
   ];
 
   for (const item of initialRooms) {
-    const dummyRoom: Room = {
-      id: item.id,
-      roomNumber: item.num,
-      name: item.name,
-      hostId: "host_" + item.id.toLowerCase(),
-      gameTitle: item.gameTitle,
-      gameId: item.gameId,
-      system: item.system,
-      netplayMode: item.mode,
-      frameDelay: 2,
-      isPrivate: false,
-      inviteToken: "inv_" + item.id.toLowerCase(),
-      supportedGames: [item.gameId],
-      participants: new Map(),
-      createdAt: Date.now() - 3600000,
-    };
-    rooms.set(item.id, dummyRoom);
-    roomsByNumber.set(item.num, dummyRoom);
+    const existing = rooms.get(item.id);
+    if (!existing) {
+      const dummyRoom: Room = {
+        id: item.id,
+        roomNumber: item.num,
+        name: item.name,
+        hostId: "host_" + item.id.toLowerCase(),
+        gameTitle: item.gameTitle,
+        gameId: item.gameId,
+        system: item.system,
+        netplayMode: item.mode,
+        frameDelay: 2,
+        isPrivate: false,
+        inviteToken: "inv_" + item.id.toLowerCase(),
+        supportedGames: [item.gameId],
+        participants: new Map(),
+        createdAt: Date.now() - 3600000,
+        isPersistent: true,
+      };
+      rooms.set(item.id, dummyRoom);
+      roomsByNumber.set(item.num, dummyRoom);
+    } else {
+      existing.isPersistent = true;
+      if (!existing.roomNumber) existing.roomNumber = item.num;
+      roomsByNumber.set(item.num, existing);
+    }
   }
 }
 seedInitialLobbyRooms();
@@ -466,9 +562,12 @@ async function startServer() {
 
   // Matchmaking Resolution Engine
   function tryMatchmaking() {
-    if (matchmakingQueue.size < 2) return;
+    if (matchmakingQueue.size === 0) return;
 
     const tickets = Array.from(matchmakingQueue.values());
+    const now = Date.now();
+
+    // 1. Pair two waiting human players
     for (let i = 0; i < tickets.length; i++) {
       const ticketA = tickets[i];
       if (!matchmakingQueue.has(ticketA.peerId)) continue;
@@ -590,6 +689,10 @@ async function startServer() {
         rooms.set(matchRoomId, newRoom);
         roomsByNumber.set(matchRoomNumber, newRoom);
 
+        // Crucial: Bind socket sessions so input relay & WebRTC work immediately!
+        setSocketRoom(ticketA.ws, matchRoomId, ticketA.peerId, ticketA.username);
+        setSocketRoom(ticketB.ws, matchRoomId, ticketB.peerId, ticketB.username);
+
         // Notify Player 1 (Host)
         ticketA.ws.send(
           JSON.stringify({
@@ -627,15 +730,186 @@ async function startServer() {
         );
 
         console.log(
-          `[Matchmaking] Successfully paired ${ticketA.username} (P1) and ${ticketB.username} (P2) into ${matchRoomId} for ${matchedGameTitle}`
+          `[Matchmaking] Paired ${ticketA.username} (P1) and ${ticketB.username} (P2) into ${matchRoomId} for ${matchedGameTitle}`
         );
-        break; // Continue scanning remaining queue
+        break;
+      }
+    }
+
+    // 2. Check if waiting ticket can join an open room that needs Player 2
+    for (const ticket of matchmakingQueue.values()) {
+      if (ticket.ws.readyState !== WebSocket.OPEN) {
+        matchmakingQueue.delete(ticket.peerId);
+        continue;
+      }
+
+      for (const openRoom of rooms.values()) {
+        if (!openRoom.isPrivate && openRoom.participants.size === 1) {
+          const [hostPeerId, hostParticipant] = Array.from(openRoom.participants.entries())[0];
+          if (hostPeerId === ticket.peerId) continue;
+
+          if (
+            ticket.consoleSystem !== "ANY" &&
+            openRoom.system &&
+            ticket.consoleSystem !== openRoom.system
+          ) {
+            continue;
+          }
+
+          matchmakingQueue.delete(ticket.peerId);
+
+          const participant: RoomParticipant = {
+            ws: ticket.ws,
+            peerId: ticket.peerId,
+            username: ticket.username,
+            role: "player2",
+            isReady: true,
+            ping: 0,
+          };
+          openRoom.participants.set(ticket.peerId, participant);
+          setSocketRoom(ticket.ws, openRoom.id, ticket.peerId, ticket.username);
+
+          ticket.ws.send(
+            JSON.stringify({
+              type: "match-found",
+              roomId: openRoom.id,
+              code: openRoom.id,
+              roomNumber: openRoom.roomNumber,
+              peerId: ticket.peerId,
+              role: "player2",
+              opponentName: hostParticipant.username,
+              gameId: openRoom.gameId,
+              gameTitle: openRoom.gameTitle,
+              system: openRoom.system,
+              netplayMode: openRoom.netplayMode,
+              room: sanitizeRoom(openRoom),
+            })
+          );
+
+          broadcastToRoom(
+            openRoom,
+            {
+              type: "peer-joined",
+              peerId: ticket.peerId,
+              username: ticket.username,
+              role: "player2",
+              room: sanitizeRoom(openRoom),
+            },
+            ticket.peerId
+          );
+
+          console.log(
+            `[Matchmaking] Matched ${ticket.username} into waiting room ${openRoom.id} vs ${hostParticipant.username}`
+          );
+          break;
+        }
+      }
+    }
+
+    // 3. If waiting for >= 2.5 seconds, pair with intelligent Challenger Bot for instant action
+    for (const ticket of matchmakingQueue.values()) {
+      if (ticket.ws.readyState !== WebSocket.OPEN) {
+        matchmakingQueue.delete(ticket.peerId);
+        continue;
+      }
+      if (now - ticket.joinedAt >= 2500) {
+        matchmakingQueue.delete(ticket.peerId);
+
+        const chosenSys = ticket.consoleSystem !== "ANY" ? ticket.consoleSystem : "NES";
+        const fallback = SYSTEM_DEFAULT_GAMES[chosenSys] || SYSTEM_DEFAULT_GAMES.NES;
+        const matchRoomId = generateRoomCode();
+        const matchRoomNumber = generateRoomNumber();
+
+        const botNames = [
+          "RetroMaster [AI Bot]",
+          "PixelWarrior [Bot]",
+          "8-Bit Phantom [AI]",
+          "ArcadeDuelist [Bot]",
+          "CyberNinja [AI]",
+        ];
+        const botName = botNames[Math.floor(Math.random() * botNames.length)];
+
+        const newRoom: Room = {
+          id: matchRoomId,
+          roomNumber: matchRoomNumber,
+          name: `Quick Duel: ${ticket.username} vs ${botName}`,
+          hostId: ticket.peerId,
+          gameTitle: fallback.title,
+          gameId: fallback.id,
+          system: fallback.system,
+          netplayMode: ticket.netplayMode || "rollback",
+          frameDelay: 2,
+          isPrivate: false,
+          participants: new Map(),
+          createdAt: Date.now(),
+        };
+
+        const participantUser: RoomParticipant = {
+          ws: ticket.ws,
+          peerId: ticket.peerId,
+          username: ticket.username,
+          role: "player1",
+          isReady: true,
+          ping: 0,
+        };
+        newRoom.participants.set(ticket.peerId, participantUser);
+
+        const botPeerId = "bot_" + Math.random().toString(36).substring(2, 8);
+        const participantBot: RoomParticipant = {
+          ws: ticket.ws,
+          peerId: botPeerId,
+          username: botName,
+          role: "player2",
+          isReady: true,
+          ping: 18,
+        };
+        newRoom.participants.set(botPeerId, participantBot);
+
+        rooms.set(matchRoomId, newRoom);
+        roomsByNumber.set(matchRoomNumber, newRoom);
+        setSocketRoom(ticket.ws, matchRoomId, ticket.peerId, ticket.username);
+
+        ticket.ws.send(
+          JSON.stringify({
+            type: "match-found",
+            roomId: matchRoomId,
+            code: matchRoomId,
+            roomNumber: matchRoomNumber,
+            peerId: ticket.peerId,
+            role: "player1",
+            opponentName: botName,
+            isBotOpponent: true,
+            botPeerId,
+            gameId: fallback.id,
+            gameTitle: fallback.title,
+            system: fallback.system,
+            netplayMode: newRoom.netplayMode,
+            room: sanitizeRoom(newRoom),
+          })
+        );
+
+        console.log(
+          `[Matchmaking] Paired ${ticket.username} with AI challenger ${botName} in room ${matchRoomId}`
+        );
       }
     }
   }
 
   // Periodic Matchmaking Queue Scanner
-  setInterval(tryMatchmaking, 1000);
+  setInterval(tryMatchmaking, 800);
+
+  // Periodic cleanup for empty dynamic rooms (> 15 minutes inactive)
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, room] of rooms.entries()) {
+      if (!room.isPersistent && room.participants.size === 0 && room.emptySince) {
+        if (now - room.emptySince > 15 * 60 * 1000) {
+          rooms.delete(id);
+          if (room.roomNumber) roomsByNumber.delete(room.roomNumber);
+        }
+      }
+    }
+  }, 60000);
 
   // WebSocket Server for WebRTC Signaling, Matchmaking & Room Management
   const wss = new WebSocketServer({ noServer: true });
@@ -654,7 +928,7 @@ async function startServer() {
           wss.emit("connection", ws, request);
         });
       } else {
-        // Not a /ws request (could be Vite HMR or other upgrade)
+        // Not a /ws request
       }
     } catch (err) {
       console.error("WebSocket upgrade error:", err);
@@ -663,27 +937,34 @@ async function startServer() {
   });
 
   wss.on("connection", (ws: WebSocket) => {
-    let currentRoomId: string | null = null;
-    let currentPeerId: string | null = null;
-    let isMatchmaking = false;
+    setSocketRoom(ws, null, null, "Player");
 
     ws.on("message", (rawMessage: string) => {
       try {
         const data = JSON.parse(rawMessage.toString());
         const { type, roomId, peerId } = data;
+        const session = socketSessions.get(ws) || {
+          roomId: null,
+          peerId: null,
+          username: "Player",
+          isMatchmaking: false,
+        };
+        const currentRoomId = session.roomId || (roomId ? parseRoomKey(roomId) : null);
+        const currentPeerId = session.peerId || peerId;
 
         switch (type) {
           case "start-matchmaking": {
             const { consoleSystem, supportedGames, netplayMode, username } = data;
             const myPeerId = peerId || "peer_" + Math.random().toString(36).substring(2, 9);
-            currentPeerId = myPeerId;
-            isMatchmaking = true;
+            session.peerId = myPeerId;
+            session.username = username || "Player";
+            session.isMatchmaking = true;
 
             const ticket: MatchmakingTicket = {
               ticketId: "ticket_" + Math.random().toString(36).substring(2, 9),
               peerId: myPeerId,
               ws,
-              username: username || "Player",
+              username: session.username,
               consoleSystem: consoleSystem || "ANY",
               supportedGames: Array.isArray(supportedGames) ? supportedGames : ["ANY"],
               netplayMode: netplayMode || "rollback",
@@ -708,10 +989,10 @@ async function startServer() {
           }
 
           case "cancel-matchmaking": {
-            if (currentPeerId) {
-              matchmakingQueue.delete(currentPeerId);
+            if (session.peerId) {
+              matchmakingQueue.delete(session.peerId);
             }
-            isMatchmaking = false;
+            session.isMatchmaking = false;
             ws.send(
               JSON.stringify({
                 type: "matchmaking-status",
@@ -740,7 +1021,7 @@ async function startServer() {
             const inviteToken = "inv_" + Math.random().toString(36).substring(2, 10);
 
             // Remove from matchmaking if they were searching
-            if (currentPeerId) matchmakingQueue.delete(currentPeerId);
+            if (session.peerId) matchmakingQueue.delete(session.peerId);
 
             const newRoom: Room = {
               id: newRoomId,
@@ -771,8 +1052,7 @@ async function startServer() {
             rooms.set(newRoomId, newRoom);
             roomsByNumber.set(newRoomNumber, newRoom);
 
-            currentRoomId = newRoomId;
-            currentPeerId = newPeerId;
+            setSocketRoom(ws, newRoomId, newPeerId, participant.username);
 
             ws.send(
               JSON.stringify({
@@ -796,16 +1076,16 @@ async function startServer() {
               ws.send(
                 JSON.stringify({
                   type: "error",
-                  message: `Room "${rawRoomId}" was not found or has expired. Please verify the 4-character code or 5-digit number.`,
+                  message: `Кімнату "${rawRoomId}" не знайдено або термін її дії вичерпано. Перевірте 4-значний код (напр. BC85), 6-значний номер або посилання.`,
                 })
               );
               return;
             }
 
             const targetRoomId = targetRoom.id;
+            targetRoom.emptySince = undefined;
 
-            // Remove from matchmaking if they were searching
-            if (currentPeerId) matchmakingQueue.delete(currentPeerId);
+            if (session.peerId) matchmakingQueue.delete(session.peerId);
 
             const newPeerId = peerId || "peer_" + Math.random().toString(36).substring(2, 9);
             const hasP1 = Array.from(targetRoom.participants.values()).some(
@@ -816,29 +1096,34 @@ async function startServer() {
             );
 
             let assignedRole: "player1" | "player2" | "spectator" = "spectator";
-            if (!hasP1) assignedRole = "player1";
-            else if (!hasP2) assignedRole = "player2";
+            if (!hasP1 || targetRoom.participants.size === 0) {
+              assignedRole = "player1";
+              targetRoom.hostId = newPeerId;
+            } else if (!hasP2) {
+              assignedRole = "player2";
+            }
 
             const participant: RoomParticipant = {
               ws,
               peerId: newPeerId,
               username:
                 data.username ||
-                (assignedRole === "player2" ? "Player 2" : `Guest ${newPeerId.slice(-4)}`),
+                (assignedRole === "player2" ? "Player 2" : `Player ${newPeerId.slice(-4)}`),
               role: assignedRole,
               isReady: false,
               ping: 0,
             };
             targetRoom.participants.set(newPeerId, participant);
 
-            currentRoomId = targetRoomId;
-            currentPeerId = newPeerId;
+            setSocketRoom(ws, targetRoomId, newPeerId, participant.username);
 
             // Notify joining client
             ws.send(
               JSON.stringify({
                 type: "room-joined",
                 roomId: targetRoomId,
+                code: targetRoomId,
+                roomNumber: targetRoom.roomNumber,
                 peerId: newPeerId,
                 role: assignedRole,
                 gameId: targetRoom.gameId,
@@ -863,7 +1148,38 @@ async function startServer() {
             break;
           }
 
-          case "update-role": {
+          case "leave-room": {
+            const activeRoomId = session.roomId || (roomId ? parseRoomKey(roomId) : null);
+            const activePeerId = session.peerId || peerId;
+            if (activeRoomId && activePeerId) {
+              const room = rooms.get(activeRoomId);
+              if (room) {
+                room.participants.delete(activePeerId);
+                if (room.participants.size === 0) {
+                  if (room.isPersistent) {
+                    room.participants.clear();
+                    room.hostId = "host_" + room.id.toLowerCase();
+                  } else {
+                    room.emptySince = Date.now();
+                  }
+                } else {
+                  if (room.hostId === activePeerId) {
+                    const nextHost = Array.from(room.participants.values())[0];
+                    room.hostId = nextHost.peerId;
+                  }
+                  broadcastToRoom(room, {
+                    type: "peer-left",
+                    peerId: activePeerId,
+                    room: sanitizeRoom(room),
+                  });
+                }
+              }
+            }
+            session.roomId = null;
+            break;
+          }
+
+          case "change-role": {
             if (!currentRoomId || !currentPeerId) return;
             const room = rooms.get(currentRoomId);
             if (!room) return;
@@ -871,7 +1187,6 @@ async function startServer() {
             if (!participant) return;
 
             const newRole = data.role as "player1" | "player2" | "spectator";
-            // Check if role is taken
             if (newRole !== "spectator") {
               const existing = Array.from(room.participants.values()).find(
                 (p) => p.role === newRole && p.peerId !== currentPeerId
@@ -880,7 +1195,7 @@ async function startServer() {
                 ws.send(
                   JSON.stringify({
                     type: "error",
-                    message: `Slot ${newRole} is currently occupied.`,
+                    message: `Слот ${newRole} зараз зайнятий іншим гравцем.`,
                   })
                 );
                 return;
@@ -947,8 +1262,9 @@ async function startServer() {
           case "av-offer":
           case "av-answer":
           case "av-ice": {
-            if (!currentRoomId) return;
-            const room = rooms.get(currentRoomId);
+            const activeRoomId = currentRoomId || (roomId ? parseRoomKey(roomId) : null);
+            if (!activeRoomId) return;
+            const room = rooms.get(activeRoomId);
             if (!room) return;
 
             const targetPeerId = data.targetPeerId;
@@ -984,8 +1300,9 @@ async function startServer() {
           case "game-sync-step":
           case "game-sync-ack":
           case "chat-message": {
-            if (!currentRoomId) return;
-            const room = rooms.get(currentRoomId);
+            const activeRoomId = currentRoomId || (roomId ? parseRoomKey(roomId) : null);
+            if (!activeRoomId) return;
+            const room = rooms.get(activeRoomId);
             if (!room) return;
 
             broadcastToRoom(
@@ -1019,33 +1336,40 @@ async function startServer() {
     });
 
     ws.on("close", () => {
-      if (currentPeerId) {
-        matchmakingQueue.delete(currentPeerId);
+      const session = socketSessions.get(ws);
+      const closePeerId = session?.peerId;
+      const closeRoomId = session?.roomId;
+
+      if (closePeerId) {
+        matchmakingQueue.delete(closePeerId);
       }
 
-      if (currentRoomId && currentPeerId) {
-        const room = rooms.get(currentRoomId);
+      if (closeRoomId && closePeerId) {
+        const room = rooms.get(closeRoomId);
         if (room) {
-          room.participants.delete(currentPeerId);
+          room.participants.delete(closePeerId);
           if (room.participants.size === 0) {
-            rooms.delete(currentRoomId);
-            if (room.roomNumber) {
-              roomsByNumber.delete(room.roomNumber);
+            if (room.isPersistent) {
+              room.participants.clear();
+              room.hostId = "host_" + room.id.toLowerCase();
+            } else {
+              room.emptySince = Date.now();
             }
           } else {
             // If host left, reassign host
-            if (room.hostId === currentPeerId) {
+            if (room.hostId === closePeerId) {
               const nextHost = Array.from(room.participants.values())[0];
               room.hostId = nextHost.peerId;
             }
             broadcastToRoom(room, {
               type: "peer-left",
-              peerId: currentPeerId,
+              peerId: closePeerId,
               room: sanitizeRoom(room),
             });
           }
         }
       }
+      socketSessions.delete(ws);
     });
   });
 

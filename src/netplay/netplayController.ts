@@ -10,6 +10,7 @@ import { WebRTCNetplayPeer } from "./webrtc";
 import { WebRTCVideoChat } from "./videoChat";
 import { RollbackNetplayEngine } from "./rollbackEngine";
 import { LockstepNetplayEngine } from "./lockstepEngine";
+import { parseRoomIdentifier } from "../utils/roomUtils";
 import {
   ChatMessage,
   ConsoleSystem,
