@@ -1059,6 +1059,16 @@ export class NetplayController {
             }
           } else {
             // Online Netplay (Rollback or Lockstep)
+            const hasBotPeer = !!this.currentRoom?.participants.some(p => p.peerId.startsWith("bot_"));
+            if (hasBotPeer && this.myRole === "player1") {
+              const currentFrame = this.emulator.getCurrentFrame();
+              const botInput = this.generateBotInput(currentFrame);
+              this.rollbackEngine.handleIncomingRemoteInput(
+                JSON.stringify({ frame: currentFrame, inputMask: botInput })
+              );
+              this.p2ActiveState = this.decodeBitmaskToController(botInput);
+            }
+
             const localInput = this.pollLocalInput();
             if (this.onInputActivity) {
               this.onInputActivity(this.p1ActiveState, this.p2ActiveState);
@@ -1184,6 +1194,52 @@ export class NetplayController {
     this.emulator.reset();
     this.rollbackEngine.reset();
     this.lockstepEngine.reset();
+  }
+
+  private decodeBitmaskToController(mask: number): ControllerState {
+    return {
+      a: (mask & 1) !== 0,
+      b: (mask & 2) !== 0,
+      select: (mask & 4) !== 0,
+      start: (mask & 8) !== 0,
+      up: (mask & 16) !== 0,
+      down: (mask & 32) !== 0,
+      left: (mask & 64) !== 0,
+      right: (mask & 128) !== 0,
+      x: false,
+      y: false,
+      l: false,
+      r: false,
+    };
+  }
+
+  private generateBotInput(frame: number): number {
+    let up = false;
+    let down = false;
+    let left = false;
+    let right = false;
+    let a = false;
+    let b = false;
+
+    // Movement pattern
+    const cycle = Math.floor(frame / 20) % 8;
+    if (cycle === 0 || cycle === 1) up = true;
+    else if (cycle === 2 || cycle === 3) down = true;
+    else if (cycle === 4) left = true;
+    else if (cycle === 5) right = true;
+
+    // Action triggers
+    if (frame % 30 === 0 || frame % 45 === 0) a = true;
+    if (frame % 60 === 0) b = true;
+
+    let mask = 0;
+    if (a) mask |= 1;
+    if (b) mask |= 2;
+    if (up) mask |= 16;
+    if (down) mask |= 32;
+    if (left) mask |= 64;
+    if (right) mask |= 128;
+    return mask;
   }
 
   public destroy() {

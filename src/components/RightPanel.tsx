@@ -326,23 +326,60 @@ export const RightPanel: React.FC<RightPanelProps> = ({
     }
   };
 
+  const handleJoinByCode = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setJoinError(null);
+    const code = joinCode.trim().toUpperCase();
+    if (!code) {
+      setJoinError("Введіть 4-значний код кімнати (напр. BC85).");
+      return;
+    }
+    const parsed = parseRoomIdentifier(code) || code;
+    onJoinRoom(parsed);
+  };
+
+  const handleJoinByNumber = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setJoinError(null);
+    const num = joinNumber.trim();
+    if (!num) {
+      setJoinError("Введіть 6-значний номер кімнати (напр. 852401).");
+      return;
+    }
+    const parsed = parseRoomIdentifier(num) || num;
+    onJoinRoom(parsed);
+  };
+
+  const handleJoinByLink = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setJoinError(null);
+    const text = smartJoinInput.trim();
+    if (!text) {
+      setJoinError("Вставте посилання або номер кімнати.");
+      return;
+    }
+    const parsed = parseRoomIdentifier(text) || text;
+    onJoinRoom(parsed);
+  };
+
   const handleJoinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setJoinError(null);
 
-    const candidate = smartJoinInput.trim() || joinCode.trim() || joinNumber.trim();
-    if (!candidate) {
-      setJoinError("Введіть 4-значний код, 6-значний номер або повне посилання на кімнату.");
+    if (joinCode.trim()) {
+      handleJoinByCode();
+      return;
+    }
+    if (joinNumber.trim()) {
+      handleJoinByNumber();
+      return;
+    }
+    if (smartJoinInput.trim()) {
+      handleJoinByLink();
       return;
     }
 
-    const parsed = parseRoomIdentifier(candidate);
-    if (parsed) {
-      onJoinRoom(parsed);
-      return;
-    }
-
-    setJoinError("Не вдалося розпізнати кімнату. Перевірте код (напр. BC85), номер (напр. 852401) або посилання.");
+    setJoinError("Введіть код кімнати (напр. BC85) або номер (напр. 852401).");
   };
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -816,9 +853,9 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                     </div>
                   )}
 
-                  {/* Sub-form: Join by Code and Room Number (TWO SEPARATE FIELDS) */}
+                  {/* Sub-form: Join by Code and Room Number (TWO SEPARATE, DIRECT FIELDS) */}
                   {roomActionTab === "join" && (
-                    <form onSubmit={handleJoinSubmit} className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-3">
                       {joinError && (
                         <div className="p-2 bg-rose-950/60 border border-rose-500/50 rounded-lg text-rose-300 text-[11px] flex items-center gap-1.5">
                           <span>⚠️</span>
@@ -826,118 +863,107 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                         </div>
                       )}
 
-                      {/* Primary: Smart Input (Code, Number, or Link) */}
-                      <div className="bg-slate-900/90 border border-slate-700/80 rounded-xl p-3 flex flex-col gap-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                            <Link className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>Код, Номер або Посилання:</span>
-                          </label>
+                      {/* FIELD 1: ROOM CODE (4 LETTERS) */}
+                      <form onSubmit={handleJoinByCode} className="bg-slate-900/90 border border-slate-800 hover:border-amber-500/50 rounded-xl p-3 flex flex-col gap-2 transition-colors">
+                        <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                          <KeyRound className="w-3.5 h-3.5" />
+                          <span>Код кімнати (4 літери):</span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={joinCode}
+                            onChange={(e) => {
+                              setJoinError(null);
+                              setJoinCode(e.target.value.trim().toUpperCase());
+                            }}
+                            placeholder="напр. BC85"
+                            maxLength={8}
+                            className="flex-1 bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-lg px-3 py-2 text-xs font-mono font-bold text-amber-400 uppercase tracking-widest focus:outline-none placeholder:text-slate-600"
+                          />
                           <button
-                            type="button"
-                            onClick={handlePasteJoinFromClipboard}
-                            className="text-[10px] text-indigo-300 hover:text-white bg-indigo-900/40 hover:bg-indigo-800/60 px-2 py-0.5 rounded border border-indigo-500/30 flex items-center gap-1 transition-colors cursor-pointer"
-                            title="Вставити з буфера обміну"
+                            type="submit"
+                            id="join-room-by-code-btn"
+                            className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap"
                           >
-                            <Clipboard className="w-3 h-3" /> Вставити
+                            <LogIn className="w-3.5 h-3.5" /> Увійти
                           </button>
                         </div>
+                        <span className="text-[10px] text-slate-400">
+                          Введіть 4-значний літерний код кімнати
+                        </span>
+                      </form>
 
-                        <input
-                          type="text"
-                          value={smartJoinInput}
-                          onChange={(e) => {
-                            setJoinError(null);
-                            setSmartJoinInput(e.target.value);
-                          }}
-                          placeholder="BC85, 852401 або вставте посилання"
-                          className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-400 rounded-lg px-3 py-2 text-xs font-mono font-bold text-white tracking-wider focus:outline-none placeholder:text-slate-600"
-                        />
+                      {/* FIELD 2: ROOM NUMBER (6 DIGITS) */}
+                      <form onSubmit={handleJoinByNumber} className="bg-slate-900/90 border border-slate-800 hover:border-indigo-500/50 rounded-xl p-3 flex flex-col gap-2 transition-colors">
+                        <label className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                          <Hash className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Номер кімнати (6 цифр):</span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={joinNumber}
+                            onChange={(e) => {
+                              setJoinError(null);
+                              setJoinNumber(e.target.value.replace(/\D/g, "").slice(0, 6));
+                            }}
+                            placeholder="напр. 852401"
+                            maxLength={6}
+                            className="flex-1 bg-slate-950 border border-slate-700 focus:border-indigo-400 rounded-lg px-3 py-2 text-xs font-mono font-bold text-indigo-300 tracking-widest focus:outline-none placeholder:text-slate-600"
+                          />
+                          <button
+                            type="submit"
+                            id="join-room-by-number-btn"
+                            className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                          >
+                            <LogIn className="w-3.5 h-3.5" /> Увійти
+                          </button>
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          Введіть числовий 6-значний номер кімнати
+                        </span>
+                      </form>
 
-                        {smartJoinInput.trim() && (
-                          <div className="flex items-center gap-1.5 text-[11px]">
-                            {(() => {
-                              const detected = detectRoomIdentifierType(smartJoinInput);
-                              const parsed = parseRoomIdentifier(smartJoinInput);
-                              if (detected === "invalid" || !parsed) {
-                                return (
-                                  <span className="text-rose-400 font-medium">
-                                    ❌ Не розпізнано. Перевірте формат.
-                                  </span>
-                                );
-                              }
-                              if (detected === "url") {
-                                return (
-                                  <span className="text-emerald-400 font-medium flex items-center gap-1">
-                                    <Check className="w-3 h-3" /> Посилання розпізнано (Кімната: <b>{parsed}</b>)
-                                  </span>
-                                );
-                              }
-                              if (detected === "number") {
-                                return (
-                                  <span className="text-indigo-300 font-medium flex items-center gap-1">
-                                    <Check className="w-3 h-3" /> Номер кімнати: <b>#{parsed}</b>
-                                  </span>
-                                );
-                              }
-                              return (
-                                <span className="text-amber-400 font-medium flex items-center gap-1">
-                                  <Check className="w-3 h-3" /> Код кімнати: <b>{parsed}</b>
-                                </span>
-                              );
-                            })()}
-                          </div>
-                        )}
-                      </div>
-
-                      <button
-                        type="submit"
-                        id="join-room-submit-button"
-                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
-                      >
-                        <LogIn className="w-4 h-4" /> Увійти в кімнату
-                      </button>
-
-                      {/* Or enter explicitly into separate fields */}
+                      {/* OPTIONAL FIELD 3: LINK OR CLIPBOARD */}
                       <details className="text-[11px] text-slate-400 group">
-                        <summary className="cursor-pointer hover:text-slate-300 select-none flex items-center justify-between py-1">
-                          <span>Або ввести окремо код / номер вручну:</span>
+                        <summary className="cursor-pointer hover:text-slate-300 select-none flex items-center justify-between py-1 px-1">
+                          <span className="flex items-center gap-1">
+                            <Link className="w-3 h-3 text-emerald-400" />
+                            <span>Або вставити посилання на кімнату</span>
+                          </span>
                           <span className="text-slate-500 text-[10px] group-open:rotate-180 transition-transform">▼</span>
                         </summary>
-                        <div className="flex flex-col gap-2 pt-2 border-t border-slate-800/80 mt-1">
-                          <div>
-                            <span className="text-[10px] text-slate-400 flex items-center gap-1 mb-0.5">
-                              <KeyRound className="w-3 h-3 text-amber-400" /> Код кімнати (4 символи):
-                            </span>
+                        <form onSubmit={handleJoinByLink} className="flex flex-col gap-2 pt-2 border-t border-slate-800/80 mt-1">
+                          <div className="flex items-center gap-1.5">
                             <input
                               type="text"
-                              value={joinCode}
+                              value={smartJoinInput}
                               onChange={(e) => {
                                 setJoinError(null);
-                                setJoinCode(e.target.value.trim().toUpperCase());
+                                setSmartJoinInput(e.target.value);
                               }}
-                              placeholder="напр. BC85"
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-amber-400 uppercase tracking-wider focus:outline-none"
+                              placeholder="Вставте повне посилання..."
+                              className="flex-1 bg-slate-950 border border-slate-700 focus:border-emerald-400 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-600 focus:outline-none"
                             />
+                            <button
+                              type="button"
+                              onClick={handlePasteJoinFromClipboard}
+                              className="text-[10px] text-indigo-300 hover:text-white bg-indigo-900/40 hover:bg-indigo-800/60 px-2.5 py-1.5 rounded-lg border border-indigo-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                              title="Вставити з буфера обміну"
+                            >
+                              <Clipboard className="w-3 h-3" /> Вставити
+                            </button>
                           </div>
-                          <div>
-                            <span className="text-[10px] text-slate-400 flex items-center gap-1 mb-0.5">
-                              <Hash className="w-3 h-3 text-indigo-400" /> Номер кімнати (6 цифр):
-                            </span>
-                            <input
-                              type="text"
-                              value={joinNumber}
-                              onChange={(e) => {
-                                setJoinError(null);
-                                setJoinNumber(e.target.value.trim());
-                              }}
-                              placeholder="напр. 852401"
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-indigo-300 tracking-wider focus:outline-none"
-                            />
-                          </div>
-                        </div>
+                          <button
+                            type="submit"
+                            className="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <LogIn className="w-3.5 h-3.5" /> Увійти за посиланням
+                          </button>
+                        </form>
                       </details>
-                    </form>
+                    </div>
                   )}
                 </div>
               )}
@@ -951,7 +977,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                       Швидкий автоматичний підбір:
                     </span>
                     <p className="text-[11px] text-slate-400">
-                      Система знайде для вас випадкового суперника онлайн для спільної дуелі.
+                      Система знайде для вас випадкового суперника онлайн. Якщо суперників немає, гра запропонує активного бота.
                     </p>
 
                     <div className="flex items-center justify-between pt-1 border-t border-slate-800 text-xs">
@@ -976,30 +1002,48 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                       <span className="text-xs font-bold text-slate-200">
                         Пошук випадкового суперника... ({searchTimerSeconds}с)
                       </span>
-                      <span className="text-[11px] text-slate-400">
-                        Очікуємо підключення іншого гравця
+                      <span className="text-[11px] text-slate-400 text-center">
+                        Шукаємо реального гравця онлайн (через 3-4с підключиться тренувальний бот)
                       </span>
-                      <button
-                        onClick={onCancelMatchmaking}
-                        className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold mt-1 cursor-pointer"
-                      >
-                        Скасувати пошук
-                      </button>
+                      <div className="flex items-center gap-2 mt-1">
+                        <button
+                          onClick={onCancelMatchmaking}
+                          className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                        >
+                          Скасувати
+                        </button>
+                      </div>
                     </div>
                   ) : (
-                    <button
-                      id="find-random-match-button"
-                      onClick={() =>
-                        onStartMatchmaking({
-                          consoleSystem: mmSystem,
-                          supportedGames: ["ANY"],
-                          netplayMode,
-                        })
-                      }
-                      className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Sparkles className="w-4 h-4" /> Почати пошук суперника онлайн
-                    </button>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        id="find-random-match-button"
+                        onClick={() =>
+                          onStartMatchmaking({
+                            consoleSystem: mmSystem,
+                            supportedGames: ["ANY"],
+                            netplayMode,
+                          })
+                        }
+                        className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Sparkles className="w-4 h-4" /> Почати пошук суперника онлайн
+                      </button>
+
+                      <button
+                        id="quick-ai-bot-match-button"
+                        onClick={() =>
+                          onStartMatchmaking({
+                            consoleSystem: mmSystem,
+                            supportedGames: ["nes-netplay-arena-2p"],
+                            netplayMode,
+                          })
+                        }
+                        className="w-full py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-emerald-500/50 text-slate-300 hover:text-white rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <span>🤖</span> Швидка гра з тренувальним AI (Миттєво)
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
