@@ -82,6 +82,7 @@ export interface RoomInfo {
   name: string;
   hostId: string;
   gameTitle: string;
+  gameId?: string;
   system: ConsoleSystem;
   romHash?: string;
   romSize?: number;

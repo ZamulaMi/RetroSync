@@ -69,6 +69,8 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
     };
   };
 
+  const [isSyncing, setIsSyncing] = React.useState(false);
+
   const p1Status = getStatusBadge(p1, false);
   const p2Status = getStatusBadge(p2, true);
 
@@ -83,18 +85,28 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
             <Users className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="text-xs font-bold text-white">Player Connection Status</h3>
-            <span className="text-[10px] text-slate-400">2-Player Netplay Session</span>
+            <h3 className="text-xs font-bold text-white">Статус гравців і синхронізація</h3>
+            <span className="text-[10px] text-slate-400">2-Player Netplay Сесія</span>
           </div>
         </div>
 
-        {metrics.desyncCount > 0 && onForceResync && (
+        {onForceResync && (
           <button
-            onClick={onForceResync}
-            className="flex items-center gap-1 px-2 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border border-yellow-500/40 rounded text-[10px] font-semibold transition-all"
-            title="Force Full State Re-sync"
+            id="force-resync-btn"
+            onClick={() => {
+              setIsSyncing(true);
+              onForceResync();
+              setTimeout(() => setIsSyncing(false), 1200);
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+              metrics.desyncCount > 0
+                ? "bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40 animate-pulse"
+                : "bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border-indigo-500/40"
+            }`}
+            title="Примусова синхронізація стану емулятора між гравцями (Re-sync)"
           >
-            <RefreshCw className="w-3 h-3" /> Re-sync
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-amber-400" : ""}`} />
+            <span>{isSyncing ? "Синхронізація..." : "Синхронізувати"}</span>
           </button>
         )}
       </div>

@@ -120,8 +120,9 @@ export class RollbackNetplayEngine {
     const localPlayerNum = isP1 ? 1 : 2;
     const remotePlayerNum = isP1 ? 2 : 1;
 
-    // 2. Fast-forward re-simulation from startFrame to targetFrame (headless / no render / audio skipped)
-    for (let f = startFrame; f < targetFrame; f++) {
+    // 2. Fast-forward re-simulation from actual restored frame to targetFrame (headless / no render / audio skipped)
+    const actualRestoredFrame = this.emulator.getCurrentFrame();
+    for (let f = actualRestoredFrame; f < targetFrame; f++) {
       const lInput = this.localInputs.get(f) ?? 0;
       let rInput = this.remoteInputs.get(f);
 
@@ -173,7 +174,7 @@ export class RollbackNetplayEngine {
     this.emulator.step(true);
 
     // 5. Periodic CRC desync check (every 60 frames = 1 sec)
-    if (currentFrame % 60 === 0 && this.peer.isConnected()) {
+    if (currentFrame % 60 === 0) {
       const checksum = this.emulator.computeStateChecksum();
       this.peer.sendStatePacket({
         type: "checksum-check",

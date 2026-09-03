@@ -377,6 +377,8 @@ export default function App() {
             netplayMode={netplayMode}
             setNetplayMode={setNetplayMode}
             metrics={metrics}
+            currentSystem={system}
+            currentGameTitle={gameTitle}
             matchmakingStatus={matchmakingStatus}
             chatMessages={chatMessages}
             onCreateRoom={handleCreateRoom}

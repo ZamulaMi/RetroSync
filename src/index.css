@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* Touch Control & Anti-Scroll Utilities */
+.touch-none-all {
+  touch-action: none !important;
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  overscroll-behavior: contain !important;
+}
+
 /* Retro Screen Filters & Shaders */
 .image-rendering-pixelated {
   image-rendering: pixelated;

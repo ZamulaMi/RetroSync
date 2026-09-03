@@ -141,6 +141,10 @@ export class SignalingClient {
     }
   }
 
+  public isSocketConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
   public close() {
     if (this.pingInterval) clearInterval(this.pingInterval);
     if (this.ws) {

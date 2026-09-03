@@ -16,13 +16,13 @@ import {
   Lock,
   Globe,
   Loader2,
-  Search,
   Gamepad2,
-  ArrowRight,
   LogOut,
   Sparkles,
   Link,
   Hash,
+  KeyRound,
+  Edit3,
 } from "lucide-react";
 import {
   ChatMessage,
@@ -43,6 +43,27 @@ import { WebRTCVideoChat } from "../netplay/videoChat";
 import { Local2PlayerPanel } from "./Local2PlayerPanel";
 import { NetplayController } from "../netplay/netplayController";
 
+const PRESET_GAMES_BY_SYSTEM: Record<ConsoleSystem, Array<{ id: string; title: string }>> = {
+  NES: [
+    { id: "nes-battle-city", title: "Battle City (1985)" },
+    { id: "nes-super-mario", title: "Super Mario Bros" },
+    { id: "nes-netplay-arena-2p", title: "Retro 2P Combat Arena (NES)" },
+    { id: "nes-pong-duel", title: "Hyper Pong Championship (NES)" },
+  ],
+  SNES: [
+    { id: "snes-super-strike", title: "Super Famicom 16-Bit Battle (SNES)" },
+  ],
+  GBA: [
+    { id: "gba-micro-combat", title: "GBA 32-Bit Dual Strike (GBA)" },
+  ],
+  GB: [
+    { id: "gb-link-battle", title: "Game Boy Link Duel (GB)" },
+  ],
+  GBC: [
+    { id: "gb-link-battle", title: "Game Boy Link Duel (GB)" },
+  ],
+};
+
 interface RightPanelProps {
   gamePlayMode: GamePlayMode;
   setGamePlayMode: (mode: GamePlayMode) => void;
@@ -59,6 +80,8 @@ interface RightPanelProps {
   netplayMode: NetplayMode;
   setNetplayMode: (mode: NetplayMode) => void;
   metrics: NetplayMetrics;
+  currentSystem?: ConsoleSystem;
+  currentGameTitle?: string;
   matchmakingStatus: MatchmakingStatus;
   chatMessages: ChatMessage[];
   onCreateRoom: (
@@ -96,6 +119,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   netplayMode,
   setNetplayMode,
   metrics,
+  currentSystem = "NES",
+  currentGameTitle,
   matchmakingStatus,
   chatMessages,
   onCreateRoom,
@@ -108,18 +133,114 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   onSendMessage,
   onForceResync,
 }) => {
-  // Online Hub Sub-tabs: "matchmaking" (random) or "room" (specific friend room)
-  const [onlineTab, setOnlineTab] = useState<"matchmaking" | "room">("matchmaking");
+  // Online Hub Sub-tabs: "room" (Create/Join specific room) or "matchmaking" (Random Queue)
+  const [onlineTab, setOnlineTab] = useState<"room" | "matchmaking">("room");
   const [roomActionTab, setRoomActionTab] = useState<"create" | "join">("create");
 
+  // Two separate fields for joining by code or number
   const [joinCode, setJoinCode] = useState("");
-  const [newRoomName, setNewRoomName] = useState("");
-  const [isPrivateRoom, setIsPrivateRoom] = useState(false);
-  const [selectedHostSystem, setSelectedHostSystem] = useState<ConsoleSystem>("NES");
-  const [selectedHostGameId, setSelectedHostGameId] = useState<string>("nes-netplay-arena-2p");
+  const [joinNumber, setJoinNumber] = useState("");
+  const [joinError, setJoinError] = useState<string | null>(null);
+
+  // In-room configuration (selected later)
+  const [isEditingRoomName, setIsEditingRoomName] = useState(false);
+  const [roomNameInput, setRoomNameInput] = useState("");
+  const [roomSystemChoice, setRoomSystemChoice] = useState<ConsoleSystem>((currentSystem as ConsoleSystem) || "NES");
+  const [roomGameChoice, setRoomGameChoice] = useState<string>(
+    PRESET_GAMES_BY_SYSTEM[(currentSystem as ConsoleSystem) || "NES"]?.[0]?.id || "nes-netplay-arena-2p"
+  );
+  const [roomCustomGameTitle, setRoomCustomGameTitle] = useState("");
+  const [gameSyncedFeedback, setGameSyncedFeedback] = useState(false);
+
   const [chatInput, setChatInput] = useState("");
   const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedNumber, setCopiedNumber] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Sync state when room updates
+  useEffect(() => {
+    if (room) {
+      setRoomNameInput(room.name);
+      setRoomSystemChoice((room.system as ConsoleSystem) || "NES");
+      if (room.gameId) {
+        setRoomGameChoice(room.gameId);
+      }
+    }
+  }, [room?.name, room?.system, room?.gameId]);
+
+  // When room system changes, reset default game choice if not in list
+  useEffect(() => {
+    const list = PRESET_GAMES_BY_SYSTEM[roomSystemChoice];
+    if (list && list.length > 0 && roomGameChoice !== "custom") {
+      const exists = list.some((g) => g.id === roomGameChoice);
+      if (!exists) {
+        setRoomGameChoice(list[0].id);
+      }
+    }
+  }, [roomSystemChoice]);
+
+  // Quick Room Creation without asking for console, game, or name upfront
+  const handleQuickCreateRoom = () => {
+    const defaultRoomName = `Кімната ${myUsername}`;
+    const defaultSystem: ConsoleSystem = (currentSystem as ConsoleSystem) || "NES";
+    const defaultGameTitle = currentGameTitle || "Retro 2P Combat Arena (NES)";
+    const defaultGameId = "nes-netplay-arena-2p";
+
+    onCreateRoom(
+      defaultRoomName,
+      netplayMode,
+      false,
+      defaultSystem,
+      defaultGameTitle,
+      defaultGameId
+    );
+  };
+
+  // In-session room name save
+  const handleSaveRoomName = () => {
+    const trimmed = roomNameInput.trim();
+    if (!trimmed || !room) {
+      setIsEditingRoomName(false);
+      return;
+    }
+    controller.updateGameInfo(
+      room.gameTitle,
+      room.system,
+      room.romHash,
+      room.romSize,
+      room.gameId,
+      trimmed
+    );
+    setIsEditingRoomName(false);
+  };
+
+  // In-session game & console apply (synchronizes to all players)
+  const handleApplyRoomGame = () => {
+    if (!room) return;
+    let finalTitle = "";
+    let finalId: string | undefined = undefined;
+
+    if (roomGameChoice === "custom") {
+      finalTitle = roomCustomGameTitle.trim() || `Retro 2P (${roomSystemChoice})`;
+    } else {
+      const preset = PRESET_GAMES_BY_SYSTEM[roomSystemChoice]?.find((g) => g.id === roomGameChoice);
+      const demo = DEMO_ROMS.find((d) => d.id === roomGameChoice);
+      finalTitle = preset?.title || demo?.title || `Retro Game (${roomSystemChoice})`;
+      finalId = roomGameChoice;
+    }
+
+    controller.updateGameInfo(
+      finalTitle,
+      roomSystemChoice,
+      undefined,
+      undefined,
+      finalId,
+      room.name
+    );
+
+    setGameSyncedFeedback(true);
+    setTimeout(() => setGameSyncedFeedback(false), 2500);
+  };
 
   // Matchmaking state
   const [mmSystem, setMmSystem] = useState<ConsoleSystem | "ANY">("ANY");
@@ -147,6 +268,13 @@ export const RightPanel: React.FC<RightPanelProps> = ({
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
+  const handleCopyNumber = () => {
+    if (!room) return;
+    navigator.clipboard.writeText(room.roomNumber || room.id);
+    setCopiedNumber(true);
+    setTimeout(() => setCopiedNumber(false), 2000);
+  };
+
   const handleCopyInviteLink = () => {
     if (!room) return;
     const url = `${window.location.origin}?room=${room.id}`;
@@ -161,8 +289,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
     if (navigator.share) {
       try {
         await navigator.share({
-          title: `Retro Netplay Room #${room.id}`,
-          text: `Приєднуйся до гри "${room.gameTitle}"! Код кімнати: ${room.id}`,
+          title: `Retro Netplay Room #${room.roomNumber || room.id}`,
+          text: `Приєднуйся до гри "${room.gameTitle}"! Консоль: ${room.system}, Код: ${room.id}`,
           url,
         });
       } catch {
@@ -173,24 +301,25 @@ export const RightPanel: React.FC<RightPanelProps> = ({
     }
   };
 
-  const handleCreateSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const demo = DEMO_ROMS.find((d) => d.id === selectedHostGameId);
-    onCreateRoom(
-      newRoomName.trim() || `Кімната ${myUsername}`,
-      netplayMode,
-      isPrivateRoom,
-      selectedHostSystem,
-      demo?.title || "Retro 2P Game",
-      selectedHostGameId
-    );
-  };
 
   const handleJoinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleaned = joinCode.trim().replace("#", "");
-    if (!cleaned) return;
-    onJoinRoom(cleaned);
+    setJoinError(null);
+
+    const cleanCode = joinCode.trim().toUpperCase().replace(/^#/, "");
+    const cleanNumber = joinNumber.trim().replace(/^#/, "");
+
+    if (cleanCode) {
+      onJoinRoom(cleanCode);
+      return;
+    }
+
+    if (cleanNumber) {
+      onJoinRoom(cleanNumber);
+      return;
+    }
+
+    setJoinError("Введіть 4-символьний код або номер кімнати у відповідне поле");
   };
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -254,18 +383,65 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               {/* Active Room Code & Share Banner */}
               <div className="bg-slate-900 border border-indigo-500/40 rounded-xl p-3 shadow-xl flex flex-col gap-2.5">
                 <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-indigo-400 tracking-wider">
+                  <div className="min-w-0 flex-1 pr-2">
+                    <span className="text-[10px] uppercase font-bold text-indigo-400 tracking-wider block">
                       Активна кімната:
                     </span>
-                    <h2 className="text-sm font-bold text-white truncate max-w-[180px]">
-                      {room.name}
-                    </h2>
+                    {isEditingRoomName ? (
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <input
+                          type="text"
+                          value={roomNameInput}
+                          onChange={(e) => setRoomNameInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleSaveRoomName();
+                            if (e.key === "Escape") setIsEditingRoomName(false);
+                          }}
+                          className="bg-slate-950 border border-indigo-500 rounded px-2 py-0.5 text-xs text-white font-bold focus:outline-none flex-1 max-w-[170px]"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveRoomName}
+                          className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors cursor-pointer"
+                          title="Зберегти назву"
+                        >
+                          <Check className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <h2 className="text-sm font-extrabold text-white truncate max-w-[170px]">
+                          {room.name}
+                        </h2>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRoomNameInput(room.name);
+                            setIsEditingRoomName(true);
+                          }}
+                          className="p-0.5 text-slate-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                          title="Змінити назву кімнати"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                    {/* Console & Game indicators */}
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      <span className="px-1.5 py-0.5 rounded bg-indigo-950 border border-indigo-500/50 text-indigo-300 font-bold font-mono text-[10px] shrink-0">
+                        {room.system}
+                      </span>
+                      <span className="flex items-center gap-1 text-[11px] text-emerald-300 font-semibold bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30 truncate max-w-[210px]">
+                        <Gamepad2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                        <span className="truncate">{room.gameTitle}</span>
+                      </span>
+                    </div>
                   </div>
                   <button
                     id="leave-room-button"
                     onClick={onLeaveRoom}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-600/40 text-[11px] font-semibold transition-all cursor-pointer"
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-600/40 text-[11px] font-semibold transition-all cursor-pointer shrink-0"
                   >
                     <LogOut className="w-3.5 h-3.5" /> Вийти
                   </button>
@@ -302,15 +478,15 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                     </span>
                     <div className="flex items-center justify-between mt-0.5">
                       <span className="font-mono text-base font-extrabold text-indigo-300 tracking-wider">
-                        #{room.id}
+                        #{room.roomNumber || room.id}
                       </span>
                       <button
                         id="copy-room-number-btn"
-                        onClick={handleCopyCode}
+                        onClick={handleCopyNumber}
                         className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
                         title="Скопіювати номер"
                       >
-                        {copiedCode ? (
+                        {copiedNumber ? (
                           <Check className="w-3.5 h-3.5 text-emerald-400" />
                         ) : (
                           <Hash className="w-3.5 h-3.5" />
@@ -347,6 +523,97 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                     <Share2 className="w-4 h-4" />
                   </button>
                 </div>
+              </div>
+
+              {/* In-Room Console & Game Selection (Chosen later inside room) */}
+              <div className="bg-slate-900 border border-indigo-500/40 rounded-xl p-3 shadow-xl flex flex-col gap-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Gamepad2 className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      Консоль та гра кімнати
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {room.system} • {room.participants.length} грав.
+                  </span>
+                </div>
+
+                {/* 1. Консоль */}
+                <div>
+                  <label className="text-[11px] text-slate-300 font-bold block mb-1">
+                    1. Консоль (платформа):
+                  </label>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {(["NES", "SNES", "GBA", "GB"] as const).map((sys) => (
+                      <button
+                        key={sys}
+                        type="button"
+                        onClick={() => {
+                          setRoomSystemChoice(sys);
+                          const games = PRESET_GAMES_BY_SYSTEM[sys];
+                          if (games && games.length > 0) {
+                            setRoomGameChoice(games[0].id);
+                          }
+                        }}
+                        className={`py-1.5 rounded-lg font-mono font-bold text-xs border transition-all cursor-pointer ${
+                          roomSystemChoice === sys
+                            ? "bg-indigo-600 border-indigo-400 text-white shadow-sm"
+                            : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                        }`}
+                      >
+                        {sys}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Гра */}
+                <div>
+                  <label className="text-[11px] text-slate-300 font-bold block mb-1">
+                    2. Гра:
+                  </label>
+                  <select
+                    value={roomGameChoice}
+                    onChange={(e) => setRoomGameChoice(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  >
+                    {(PRESET_GAMES_BY_SYSTEM[roomSystemChoice] || []).map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.title}
+                      </option>
+                    ))}
+                    <option value="custom">✏️ Власна назва гри...</option>
+                  </select>
+
+                  {roomGameChoice === "custom" && (
+                    <input
+                      type="text"
+                      value={roomCustomGameTitle}
+                      onChange={(e) => setRoomCustomGameTitle(e.target.value)}
+                      placeholder="Введіть назву гри..."
+                      className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                    />
+                  )}
+                </div>
+
+                {/* Застосувати для обох гравців */}
+                <button
+                  type="button"
+                  id="apply-room-game-btn"
+                  onClick={handleApplyRoomGame}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {gameSyncedFeedback ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-white" /> Синхронізовано для обох гравців!
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5" /> Застосувати гру для кімнати
+                    </>
+                  )}
+                </button>
               </div>
 
               {/* 1. Player Status Panel */}
@@ -438,35 +705,174 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 />
               </div>
 
-              {/* Sub-tabs: Random Matchmaking vs Specific Player Room */}
+              {/* Sub-tabs: Create/Join Room vs Random Matchmaking */}
               <div className="grid grid-cols-2 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
-                <button
-                  id="tab-online-random"
-                  onClick={() => setOnlineTab("matchmaking")}
-                  className={`py-1.5 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1 ${
-                    onlineTab === "matchmaking"
-                      ? "bg-indigo-600 text-white shadow-sm"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  <Search className="w-3.5 h-3.5" />
-                  <span>Випадковий гравець</span>
-                </button>
                 <button
                   id="tab-online-room"
                   onClick={() => setOnlineTab("room")}
-                  className={`py-1.5 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     onlineTab === "room"
                       ? "bg-indigo-600 text-white shadow-sm"
                       : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
                   <Users className="w-3.5 h-3.5" />
-                  <span>Кімната з гравцем</span>
+                  <span>Кімната</span>
+                </button>
+                <button
+                  id="tab-online-random"
+                  onClick={() => setOnlineTab("matchmaking")}
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    onlineTab === "matchmaking"
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Швидкий підбір</span>
                 </button>
               </div>
 
-              {/* OPTION A: RANDOM MATCHMAKING */}
+              {/* TAB 1: SPECIFIC PLAYER ROOM (CREATE OR JOIN) */}
+              {onlineTab === "room" && (
+                <div className="flex flex-col gap-3">
+                  {/* Create vs Join selector */}
+                  <div className="flex border-b border-slate-800">
+                    <button
+                      onClick={() => setRoomActionTab("create")}
+                      className={`flex-1 py-1.5 text-xs font-bold transition-colors border-b-2 cursor-pointer ${
+                        roomActionTab === "create"
+                          ? "border-indigo-500 text-indigo-300 bg-indigo-500/10"
+                          : "border-transparent text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      Створити кімнату
+                    </button>
+                    <button
+                      onClick={() => setRoomActionTab("join")}
+                      className={`flex-1 py-1.5 text-xs font-bold transition-colors border-b-2 cursor-pointer ${
+                        roomActionTab === "join"
+                          ? "border-emerald-500 text-emerald-300 bg-emerald-500/10"
+                          : "border-transparent text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      Увійти в кімнату
+                    </button>
+                  </div>
+
+                  {/* Sub-form: Create Room */}
+                  {roomActionTab === "create" && (
+                    <div className="flex flex-col gap-3">
+                      <div className="p-4 bg-gradient-to-b from-indigo-950/40 to-slate-950 border border-indigo-500/30 rounded-xl flex flex-col items-center text-center gap-3 shadow-inner">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shadow-md">
+                          <Sparkles className="w-6 h-6 text-indigo-400" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-extrabold text-white">Швидке створення кімнати</h4>
+                          <p className="text-xs text-slate-300 mt-1 leading-relaxed max-w-xs">
+                            Створіть кімнату в 1 клік та отримайте 4-значний код і 6-значний номер для запрошення другого гравця.
+                          </p>
+                        </div>
+
+                        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 text-[11px] text-slate-400 flex items-start gap-2 text-left">
+                          <Gamepad2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <span className="leading-snug">
+                            Консоль (NES, SNES, GBA, GB), гру та назву кімнати ви зможете обрати після створення прямо в сесії кімнати.
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          id="quick-create-room-button"
+                          onClick={handleQuickCreateRoom}
+                          className="w-full py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                        >
+                          <Plus className="w-4 h-4" /> Створити кімнату
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sub-form: Join by Code and Room Number (TWO SEPARATE FIELDS) */}
+                  {roomActionTab === "join" && (
+                    <form onSubmit={handleJoinSubmit} className="flex flex-col gap-3">
+                      {joinError && (
+                        <div className="p-2 bg-rose-950/60 border border-rose-500/50 rounded-lg text-rose-300 text-[11px]">
+                          ⚠️ {joinError}
+                        </div>
+                      )}
+
+                      {/* Field 1: Код кімнати */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[11px] text-slate-300 font-bold flex items-center gap-1">
+                            <KeyRound className="w-3 h-3 text-amber-400" />
+                            <span>1. Код кімнати (4 символи):</span>
+                          </label>
+                          <span className="text-[10px] text-slate-500 font-mono">напр. BC85</span>
+                        </div>
+                        <input
+                          type="text"
+                          maxLength={8}
+                          value={joinCode}
+                          onChange={(e) => {
+                            setJoinError(null);
+                            let val = e.target.value.trim().toUpperCase();
+                            if (val.includes("ROOM=")) {
+                              const match = val.match(/ROOM=([A-Z0-9_-]+)/);
+                              if (match && match[1]) val = match[1];
+                            }
+                            setJoinCode(val.replace(/^#/, ""));
+                          }}
+                          placeholder="Введіть 4-значний код (напр. BC85)"
+                          className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-lg px-3 py-2 text-xs font-mono font-bold text-amber-400 uppercase tracking-wider focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Field 2: Номер кімнати */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[11px] text-slate-300 font-bold flex items-center gap-1">
+                            <Hash className="w-3 h-3 text-indigo-400" />
+                            <span>2. Номер кімнати (6 цифр):</span>
+                          </label>
+                          <span className="text-[10px] text-slate-500 font-mono">напр. 852401</span>
+                        </div>
+                        <input
+                          type="text"
+                          maxLength={10}
+                          value={joinNumber}
+                          onChange={(e) => {
+                            setJoinError(null);
+                            let val = e.target.value.trim();
+                            if (val.includes("ROOM=")) {
+                              const match = val.match(/ROOM=([A-Z0-9_-]+)/);
+                              if (match && match[1]) val = match[1];
+                            }
+                            setJoinNumber(val.replace(/^#/, ""));
+                          }}
+                          placeholder="Введіть 6-значний номер (напр. 852401)"
+                          className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs font-mono font-bold text-indigo-300 tracking-wider focus:outline-none"
+                        />
+                      </div>
+
+                      <p className="text-[11px] text-slate-400 bg-slate-950/70 p-2 rounded-lg border border-slate-800">
+                        Введіть код або номер кімнати, наданий іншим гравцем, та натисніть «Увійти в кімнату».
+                      </p>
+
+                      <button
+                        type="submit"
+                        id="join-room-submit-button"
+                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <LogIn className="w-4 h-4" /> Увійти в кімнату
+                      </button>
+                    </form>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 2: RANDOM MATCHMAKING */}
               {onlineTab === "matchmaking" && (
                 <div className="flex flex-col gap-3">
                   <div className="p-3 bg-slate-950/70 border border-slate-800/80 rounded-xl flex flex-col gap-2 text-xs">
@@ -522,144 +928,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                       }
                       className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
                     >
-                      <Search className="w-4 h-4" /> Почати пошук суперника онлайн
+                      <Sparkles className="w-4 h-4" /> Почати пошук суперника онлайн
                     </button>
-                  )}
-                </div>
-              )}
-
-              {/* OPTION B: SPECIFIC PLAYER ROOM (CREATE OR JOIN BY CODE / NUMBER / LINK) */}
-              {onlineTab === "room" && (
-                <div className="flex flex-col gap-3">
-                  {/* Create vs Join selector */}
-                  <div className="flex border-b border-slate-800">
-                    <button
-                      onClick={() => setRoomActionTab("create")}
-                      className={`flex-1 py-1.5 text-xs font-bold transition-colors border-b-2 cursor-pointer ${
-                        roomActionTab === "create"
-                          ? "border-indigo-500 text-indigo-300 bg-indigo-500/10"
-                          : "border-transparent text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      Створити кімнату
-                    </button>
-                    <button
-                      onClick={() => setRoomActionTab("join")}
-                      className={`flex-1 py-1.5 text-xs font-bold transition-colors border-b-2 cursor-pointer ${
-                        roomActionTab === "join"
-                          ? "border-emerald-500 text-emerald-300 bg-emerald-500/10"
-                          : "border-transparent text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      Вхід за кодом / посиланням
-                    </button>
-                  </div>
-
-                  {/* Sub-form: Create Room */}
-                  {roomActionTab === "create" && (
-                    <form onSubmit={handleCreateSubmit} className="flex flex-col gap-2.5">
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1 font-semibold">
-                          Назва кімнати:
-                        </label>
-                        <input
-                          type="text"
-                          value={newRoomName}
-                          onChange={(e) => setNewRoomName(e.target.value)}
-                          placeholder={`Кімната ${myUsername}`}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div>
-                          <label className="text-[10px] text-slate-400 block mb-1 font-semibold">
-                            Консоль:
-                          </label>
-                          <select
-                            value={selectedHostSystem}
-                            onChange={(e) => setSelectedHostSystem(e.target.value as ConsoleSystem)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-200"
-                          >
-                            <option value="NES">NES</option>
-                            <option value="SNES">SNES</option>
-                            <option value="GBA">GBA</option>
-                            <option value="GB">Game Boy</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="text-[10px] text-slate-400 block mb-1 font-semibold">
-                            Гра:
-                          </label>
-                          <select
-                            value={selectedHostGameId}
-                            onChange={(e) => setSelectedHostGameId(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-200"
-                          >
-                            {DEMO_ROMS.map((d) => (
-                              <option key={d.id} value={d.id}>
-                                {d.title}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      <p className="text-[11px] text-slate-400 bg-slate-950/70 p-2 rounded-lg border border-slate-800">
-                        Після створення кімнати ви отримаєте унікальний 6-значний код, номер та
-                        пряме посилання для надсилання другу.
-                      </p>
-
-                      <button
-                        type="submit"
-                        id="create-private-room-button"
-                        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" /> Створити кімнату
-                      </button>
-                    </form>
-                  )}
-
-                  {/* Sub-form: Join by Code / Number / Link */}
-                  {roomActionTab === "join" && (
-                    <form onSubmit={handleJoinSubmit} className="flex flex-col gap-2.5">
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1 font-semibold">
-                          Введіть код, номер кімнати або посилання:
-                        </label>
-                        <input
-                          type="text"
-                          value={joinCode}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            // Parse room param if URL pasted
-                            if (val.includes("room=")) {
-                              const match = val.match(/room=([A-Za-z0-9_-]+)/);
-                              if (match && match[1]) {
-                                setJoinCode(match[1].toUpperCase());
-                                return;
-                              }
-                            }
-                            setJoinCode(val.toUpperCase());
-                          }}
-                          placeholder="напр. K8X29Q, #K8X29Q або https://..."
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-xs font-mono text-slate-200 uppercase focus:outline-none focus:border-emerald-500"
-                        />
-                      </div>
-
-                      <p className="text-[11px] text-slate-400 bg-slate-950/70 p-2 rounded-lg border border-slate-800">
-                        Вставте код, номер кімнати або повне посилання, надіслане іншим гравцем.
-                      </p>
-
-                      <button
-                        type="submit"
-                        id="join-room-submit-button"
-                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <LogIn className="w-4 h-4" /> Увійти в кімнату
-                      </button>
-                    </form>
                   )}
                 </div>
               )}

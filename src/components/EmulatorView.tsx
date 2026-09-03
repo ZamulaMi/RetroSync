@@ -265,7 +265,7 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
 
       {/* On-Screen Dedicated Touch Gamepad (Positioned DIRECTLY underneath the screen) */}
       {showTouchControls && (
-        <div className="w-full mt-2 sm:mt-3">
+        <div className="w-full mt-1.5 sm:mt-2">
           <TouchGamepad
             controller={controller}
             system={system}
@@ -276,7 +276,7 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
       )}
 
       {/* Quick Action Toolbar */}
-      <div className="flex items-center justify-between flex-wrap gap-2 w-full mt-3 px-1">
+      <div className="flex items-center justify-between flex-wrap gap-2 w-full mt-2 px-1">
         {/* Playback Controls, Menu & Scale Mode */}
         <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
           {onOpenMenu && (
@@ -351,53 +351,55 @@ export const EmulatorView: React.FC<EmulatorViewProps> = ({
           </button>
         </div>
 
-        {/* Quick Gamepad Buttons (START, SELECT, A, B) */}
-        <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs">
-          <button
-            id="quick-btn-start"
-            onClick={() => {
-              triggerButtonPress("start");
-              showToast("Pressed START");
-            }}
-            className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded font-mono font-bold text-[11px] transition-all active:scale-95 cursor-pointer"
-            title="Press START (Enter)"
-          >
-            START
-          </button>
-          <button
-            id="quick-btn-select"
-            onClick={() => {
-              triggerButtonPress("select");
-              showToast("Pressed SELECT");
-            }}
-            className="px-2 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 rounded font-mono font-bold text-[11px] transition-all active:scale-95 cursor-pointer"
-            title="Press SELECT (Shift)"
-          >
-            SELECT
-          </button>
-          <button
-            id="quick-btn-b"
-            onClick={() => {
-              triggerButtonPress("b");
-              showToast("Pressed B");
-            }}
-            className="w-7 h-7 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-full font-bold text-xs flex items-center justify-center transition-all active:scale-95 cursor-pointer"
-            title="Press B (Z)"
-          >
-            B
-          </button>
-          <button
-            id="quick-btn-a"
-            onClick={() => {
-              triggerButtonPress("a");
-              showToast("Pressed A");
-            }}
-            className="w-7 h-7 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-full font-bold text-xs flex items-center justify-center transition-all active:scale-95 cursor-pointer"
-            title="Press A (X)"
-          >
-            A
-          </button>
-        </div>
+        {/* Quick Gamepad Buttons (Shown only when Touch Pad is hidden, to avoid redundancy) */}
+        {!showTouchControls && (
+          <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs">
+            <button
+              id="quick-btn-start"
+              onClick={() => {
+                triggerButtonPress("start");
+                showToast("Pressed START");
+              }}
+              className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded font-mono font-bold text-[11px] transition-all active:scale-95 cursor-pointer"
+              title="Press START (Enter)"
+            >
+              START
+            </button>
+            <button
+              id="quick-btn-select"
+              onClick={() => {
+                triggerButtonPress("select");
+                showToast("Pressed SELECT");
+              }}
+              className="px-2 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 rounded font-mono font-bold text-[11px] transition-all active:scale-95 cursor-pointer"
+              title="Press SELECT (Shift)"
+            >
+              SELECT
+            </button>
+            <button
+              id="quick-btn-b"
+              onClick={() => {
+                triggerButtonPress("b");
+                showToast("Pressed B");
+              }}
+              className="w-7 h-7 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-full font-bold text-xs flex items-center justify-center transition-all active:scale-95 cursor-pointer"
+              title="Press B (Z)"
+            >
+              B
+            </button>
+            <button
+              id="quick-btn-a"
+              onClick={() => {
+                triggerButtonPress("a");
+                showToast("Pressed A");
+              }}
+              className="w-7 h-7 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-full font-bold text-xs flex items-center justify-center transition-all active:scale-95 cursor-pointer"
+              title="Press A (X)"
+            >
+              A
+            </button>
+          </div>
+        )}
 
         {/* Save State Quick Slots */}
         <div className="flex items-center gap-1.5 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800 text-xs">

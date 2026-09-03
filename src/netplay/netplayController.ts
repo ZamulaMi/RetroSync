@@ -181,10 +181,22 @@ export class NetplayController {
       this.matchmakingStatus = "idle";
       this.rollbackEngine.setLocalRole(this.myRole);
       this.lockstepEngine.setLocalRole(this.myRole);
+
+      const roomData = data.room as RoomInfo | undefined;
+      if (roomData?.system) {
+        this.emulator.system = roomData.system;
+      }
+      if (roomData?.gameTitle) {
+        this.emulator.title = roomData.gameTitle;
+      }
+      if (roomData?.gameId) {
+        this.emulator.loadDemoRom(roomData.gameId);
+      }
+
       if (this.onRoomUpdate) this.onRoomUpdate(this.currentRoom);
       if (this.onStatusMessage)
         this.onStatusMessage(
-          `Room ${this.currentRoom.id} created (${this.currentRoom.isPrivate ? "Private" : "Public"})`,
+          `Кімнату #${this.currentRoom.roomNumber || this.currentRoom.id} (${this.currentRoom.id}) створено`,
           "success"
         );
       if (this.onMatchmakingStatusChange) this.onMatchmakingStatusChange("idle");
@@ -198,14 +210,23 @@ export class NetplayController {
       this.rollbackEngine.setLocalRole(this.myRole);
       this.lockstepEngine.setLocalRole(this.myRole);
 
+      const roomData = data.room as RoomInfo | undefined;
+      if (roomData?.system) {
+        this.emulator.system = roomData.system;
+      }
+      if (roomData?.gameTitle) {
+        this.emulator.title = roomData.gameTitle;
+      }
       if (data.gameId) {
         this.emulator.loadDemoRom(data.gameId as string);
+      } else if (roomData?.gameId) {
+        this.emulator.loadDemoRom(roomData.gameId);
       }
 
       if (this.onRoomUpdate) this.onRoomUpdate(this.currentRoom);
       if (this.onStatusMessage)
         this.onStatusMessage(
-          `Joined room ${this.currentRoom.id} as ${this.myRole.toUpperCase()}`,
+          `Приєднано до кімнати #${this.currentRoom.roomNumber || this.currentRoom.id} як ${this.myRole.toUpperCase()}`,
           "success"
         );
       if (this.onMatchmakingStatusChange) this.onMatchmakingStatusChange("idle");
@@ -248,6 +269,12 @@ export class NetplayController {
 
     this.signaling.on("game-updated", (data) => {
       this.currentRoom = data.room as RoomInfo;
+      if (data.system) {
+        this.emulator.system = data.system as ConsoleSystem;
+      }
+      if (data.gameTitle) {
+        this.emulator.title = data.gameTitle as string;
+      }
       if (data.netplayMode) {
         this.netplayMode = data.netplayMode as NetplayMode;
       }
@@ -255,7 +282,7 @@ export class NetplayController {
         this.emulator.loadDemoRom(data.gameId as string);
       }
       if (this.onRoomUpdate) this.onRoomUpdate(this.currentRoom);
-      if (this.onStatusMessage) this.onStatusMessage(`Game updated: ${data.gameTitle}`, "info");
+      if (this.onStatusMessage) this.onStatusMessage(`Гру оновлено: ${data.gameTitle}`, "info");
     });
 
     // Random Matchmaking Handlers
@@ -551,7 +578,7 @@ export class NetplayController {
     if (this.onMatchmakingStatusChange) this.onMatchmakingStatusChange("idle");
   }
 
-  public createRoom(
+  public async createRoom(
     roomName: string,
     gameTitle: string,
     system: string,
@@ -573,14 +600,115 @@ export class NetplayController {
       isPrivate,
       supportedGames,
     });
+
+    // If WebSocket is not open or delayed, use REST fallback to guarantee room creation
+    if (!this.signaling.isSocketConnected()) {
+      try {
+        const res = await fetch("/api/rooms/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            roomName,
+            gameTitle,
+            gameId,
+            system,
+            netplayMode: mode,
+            isPrivate,
+            username: this.myUsername,
+            supportedGames,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.room) {
+            this.currentRoom = data.room;
+            this.myPeerId = data.peerId;
+            this.myRole = "player1";
+            this.matchmakingStatus = "idle";
+            this.rollbackEngine.setLocalRole("player1");
+            this.lockstepEngine.setLocalRole("player1");
+            if (this.onRoomUpdate) this.onRoomUpdate(this.currentRoom);
+            if (this.onStatusMessage) {
+              this.onStatusMessage(`Кімнату #${data.roomNumber} (${data.code}) створено успішно!`, "success");
+            }
+            return;
+          }
+        }
+      } catch {
+        // Fallback to local room generation if backend offline
+      }
+
+      // Offline / Static-hosting fallback
+      const fallbackCode = Math.random().toString(36).substring(2, 6).toUpperCase();
+      const fallbackNumber = Math.floor(100000 + Math.random() * 900000).toString();
+      const fallbackHostId = "host_" + Math.random().toString(36).substring(2, 8);
+      const localRoom: RoomInfo = {
+        id: fallbackCode,
+        roomNumber: fallbackNumber,
+        name: roomName.trim() || `Кімната ${this.myUsername}`,
+        hostId: fallbackHostId,
+        gameTitle: gameTitle || "Retro 2P Game",
+        gameId: gameId || "nes-netplay-arena-2p",
+        system: (system as ConsoleSystem) || "NES",
+        netplayMode: mode,
+        frameDelay: 2,
+        isPrivate,
+        inviteToken: Math.random().toString(36).substring(2, 10),
+        supportedGames: supportedGames || ["ANY"],
+        participants: [
+          {
+            peerId: fallbackHostId,
+            username: this.myUsername,
+            role: "player1",
+            isReady: true,
+            ping: 0,
+          },
+        ],
+        createdAt: Date.now(),
+      };
+      this.currentRoom = localRoom;
+      this.myPeerId = fallbackHostId;
+      this.myRole = "player1";
+      this.matchmakingStatus = "idle";
+      this.rollbackEngine.setLocalRole("player1");
+      this.lockstepEngine.setLocalRole("player1");
+      if (this.onRoomUpdate) this.onRoomUpdate(this.currentRoom);
+      if (this.onStatusMessage) {
+        this.onStatusMessage(`Кімнату #${fallbackNumber} (${fallbackCode}) створено!`, "success");
+      }
+    }
   }
 
-  public joinRoom(roomId: string) {
+  public async joinRoom(roomId: string) {
+    const cleanId = roomId.trim().toUpperCase().replace(/^#/, "");
     this.signaling.send({
       type: "join-room",
-      roomId: roomId.trim().toUpperCase(),
+      roomId: cleanId,
       username: this.myUsername,
     });
+
+    if (!this.signaling.isSocketConnected()) {
+      try {
+        const res = await fetch(`/api/rooms/${encodeURIComponent(cleanId)}`);
+        if (res.ok) {
+          const roomData = await res.json();
+          if (roomData && roomData.id) {
+            this.currentRoom = roomData;
+            this.myPeerId = "guest_" + Math.random().toString(36).substring(2, 8);
+            this.myRole = "player2";
+            this.netplayMode = roomData.netplayMode || "rollback";
+            this.rollbackEngine.setLocalRole("player2");
+            this.lockstepEngine.setLocalRole("player2");
+            if (this.onRoomUpdate) this.onRoomUpdate(this.currentRoom);
+            if (this.onStatusMessage) {
+              this.onStatusMessage(`Приєднано до кімнати #${roomData.roomNumber || roomData.id}!`, "success");
+            }
+          }
+        }
+      } catch {
+        // Fallback
+      }
+    }
   }
 
   public leaveRoom() {
@@ -613,10 +741,26 @@ export class NetplayController {
     system: string,
     romHash?: string,
     romSize?: number,
-    gameId?: string
+    gameId?: string,
+    roomName?: string
   ) {
+    if (this.currentRoom) {
+      if (roomName) this.currentRoom.name = roomName;
+      this.currentRoom.gameTitle = gameTitle;
+      this.currentRoom.system = system as ConsoleSystem;
+      if (gameId) this.currentRoom.gameId = gameId;
+    }
+    this.emulator.system = system as ConsoleSystem;
+    this.emulator.title = gameTitle;
+    if (gameId) {
+      this.emulator.loadDemoRom(gameId);
+    }
+    if (this.onRoomUpdate && this.currentRoom) {
+      this.onRoomUpdate({ ...this.currentRoom });
+    }
     this.signaling.send({
       type: "update-game",
+      name: roomName,
       gameTitle,
       gameId,
       system,

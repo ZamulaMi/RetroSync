@@ -1,12 +1,12 @@
 /**
  * Dedicated On-Screen Touch Gamepad
  * Optimized specifically for touchscreens and mobile devices:
- * - Positioned directly beneath the screen canvas.
- * - Exactly 2 LARGE Action Buttons (B and A) with ergonomic thumb spacing.
- * - Complete screen movement & scroll lock (touch-action: none, preventDefault).
- * - Continuous 8-directional thumb tracking (Smooth 360° Joystick & Precision 8-Way D-Pad).
- * - True multi-touch support for simultaneous movement + jump/attack button combos.
- * - Haptic feedback and visual tactile depression.
+ * 1. Positioned directly underneath the game screen.
+ * 2. Complete screen movement & scroll lock: native non-passive touch listeners prevent all page scrolling/viewport movement.
+ * 3. Dynamic Floating Center Touch Control: Touch anywhere in the movement zone to establish origin;
+ *    thumb movement seamlessly drives 360° or 8-directional input with zero aiming friction.
+ * 4. Slide-friendly action buttons: Exactly 2 large buttons (B and A) with seamless rolling-thumb multi-touch.
+ * 5. Visual input feedback and subtle haptic vibration.
  */
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
@@ -28,7 +28,7 @@ interface TouchGamepadProps {
   onReset?: () => void;
 }
 
-type StickMode = "dpad" | "joystick";
+type StickMode = "dynamic" | "dpad";
 type PadSize = "compact" | "normal" | "large";
 
 export const TouchGamepad: React.FC<TouchGamepadProps> = ({
@@ -37,12 +37,12 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
   onOpenMenu,
   onReset,
 }) => {
-  const [stickMode, setStickMode] = useState<StickMode>("joystick");
+  const [stickMode, setStickMode] = useState<StickMode>("dynamic");
   const [padSize, setPadSize] = useState<PadSize>("normal");
   const [hapticsEnabled, setHapticsEnabled] = useState<boolean>(true);
   const [touchPlayer, setTouchPlayer] = useState<1 | 2>(controller.touchPlayerAssignment || 1);
 
-  // Active state for visual highlighting of directions
+  // Active state for visual directional chevrons (▲, ▼, ◀, ▶)
   const [activeDirections, setActiveDirections] = useState<{
     up: boolean;
     down: boolean;
@@ -50,7 +50,7 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
     right: boolean;
   }>({ up: false, down: false, left: false, right: false });
 
-  // Active state for B, A, SELECT, START
+  // Active state for buttons
   const [activeButtons, setActiveButtons] = useState<{
     a: boolean;
     b: boolean;
@@ -63,15 +63,18 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
     start: false,
   });
 
-  // Joystick knob offset position in px from center
+  // Joystick knob offset position in px from touch origin
   const [stickOffset, setStickOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isStickActive, setIsStickActive] = useState<boolean>(false);
 
-  // Refs for tracking touches
+  // Refs for tracking native touch interactions
+  const containerRef = useRef<HTMLDivElement>(null);
   const stickAreaRef = useRef<HTMLDivElement>(null);
+  const actionAreaRef = useRef<HTMLDivElement>(null);
   const stickTouchIdRef = useRef<number | null>(null);
+  const touchOriginRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Trigger brief haptic feedback on supported touch devices
+  // Haptic feedback trigger
   const triggerHaptic = useCallback(
     (durationMs = 15) => {
       if (hapticsEnabled && typeof navigator !== "undefined" && navigator.vibrate) {
@@ -85,7 +88,32 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
     [hapticsEnabled]
   );
 
-  // Clean up all touch states on unmount
+  // Prevent ALL viewport scrolling, pull-to-refresh, and zoom when interacting with the gamepad
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const preventDefaultTouch = (e: TouchEvent) => {
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+    };
+
+    // Use non-passive event listeners to ensure browser gives full control to canvas/gamepad
+    container.addEventListener("touchstart", preventDefaultTouch, { passive: false });
+    container.addEventListener("touchmove", preventDefaultTouch, { passive: false });
+    container.addEventListener("touchend", preventDefaultTouch, { passive: false });
+    container.addEventListener("touchcancel", preventDefaultTouch, { passive: false });
+
+    return () => {
+      container.removeEventListener("touchstart", preventDefaultTouch);
+      container.removeEventListener("touchmove", preventDefaultTouch);
+      container.removeEventListener("touchend", preventDefaultTouch);
+      container.removeEventListener("touchcancel", preventDefaultTouch);
+    };
+  }, []);
+
+  // Clean up all controller touch states on unmount
   useEffect(() => {
     return () => {
       controller.touchState.up = false;
@@ -104,32 +132,50 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
   }, [controller]);
 
   /**
-   * Process thumbstick / D-pad continuous movement from a touch position relative to the pad center
+   * Process thumb movement optimized for touch screens:
+   * In 'dynamic' mode: touch point on start sets the anchor, so thumb slides relative to wherever it landed.
+   * In 'dpad' mode: relative to static center of the D-Pad.
    */
   const processMovement = useCallback(
     (clientX: number, clientY: number) => {
       if (!stickAreaRef.current) return;
+
       const rect = stickAreaRef.current.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
+      let centerX = rect.left + rect.width / 2;
+      let centerY = rect.top + rect.height / 2;
 
-      const deltaX = clientX - centerX;
-      const deltaY = clientY - centerY;
+      // In dynamic stick mode, calculate offset from initial touchdown point
+      if (stickMode === "dynamic" && touchOriginRef.current) {
+        centerX = touchOriginRef.current.x;
+        centerY = touchOriginRef.current.y;
+      }
+
+      let deltaX = clientX - centerX;
+      let deltaY = clientY - centerY;
       const distance = Math.hypot(deltaX, deltaY);
-      const maxRadius = rect.width * 0.42; // Limit thumbstick travel
+      const maxRadius = rect.width * 0.44;
 
-      // Visual stick knob coordinates clamped to circle
+      // Floating anchor adjustment: if thumb pulls further than maxRadius in dynamic mode,
+      // slide origin so reversing direction has instant zero-latency response!
+      if (stickMode === "dynamic" && distance > maxRadius && touchOriginRef.current) {
+        const excess = distance - maxRadius;
+        const angle = Math.atan2(deltaY, deltaX);
+        touchOriginRef.current.x += Math.cos(angle) * excess;
+        touchOriginRef.current.y += Math.sin(angle) * excess;
+        deltaX = clientX - touchOriginRef.current.x;
+        deltaY = clientY - touchOriginRef.current.y;
+      }
+
       const clampedDist = Math.min(distance, maxRadius);
       const angle = Math.atan2(deltaY, deltaX);
       const knobX = Math.cos(angle) * clampedDist;
       const knobY = Math.sin(angle) * clampedDist;
       setStickOffset({ x: knobX, y: knobY });
 
-      // Deadzone threshold in pixels (~12% of pad width)
+      // Deadzone threshold (~12% of stick width)
       const deadzone = rect.width * 0.12;
 
       if (distance < deadzone) {
-        // Center deadzone - release all directions
         controller.touchState.up = false;
         controller.touchState.down = false;
         controller.touchState.left = false;
@@ -138,10 +184,8 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
         return;
       }
 
-      // Convert angle to degrees (-180 to 180)
+      // 8-directional sectors with 45° sectors for seamless diagonal input
       const deg = (angle * 180) / Math.PI;
-
-      // 8-directional sector calculation with 45° sectors for seamless diagonals
       let up = false;
       let down = false;
       let left = false;
@@ -160,17 +204,16 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
         left = true;
       }
 
-      // Check if state changed for haptic cue
+      // Haptic cue when crossing direction thresholds
       if (
         up !== controller.touchState.up ||
         down !== controller.touchState.down ||
         left !== controller.touchState.left ||
         right !== controller.touchState.right
       ) {
-        triggerHaptic(10);
+        triggerHaptic(12);
       }
 
-      // Apply to controller touch state
       controller.touchState.up = up;
       controller.touchState.down = down;
       controller.touchState.left = left;
@@ -178,11 +221,12 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
 
       setActiveDirections({ up, down, left, right });
     },
-    [controller, triggerHaptic]
+    [stickMode, controller, triggerHaptic]
   );
 
   const resetMovement = useCallback(() => {
     stickTouchIdRef.current = null;
+    touchOriginRef.current = null;
     setIsStickActive(false);
     setStickOffset({ x: 0, y: 0 });
     controller.touchState.up = false;
@@ -193,15 +237,15 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
   }, [controller]);
 
   /**
-   * Dedicated Touch Events for Movement Pad
-   * Attached directly with preventDefault() to guarantee zero screen scroll
+   * Touch handlers for Movement Zone
    */
   const handleStickTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.touches.length > 0) {
+    if (e.changedTouches.length > 0) {
       const touch = e.changedTouches[0];
       stickTouchIdRef.current = touch.identifier;
+      touchOriginRef.current = { x: touch.clientX, y: touch.clientY };
       setIsStickActive(true);
       processMovement(touch.clientX, touch.clientY);
       triggerHaptic(18);
@@ -233,47 +277,97 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
   };
 
   /**
-   * Action button handlers (Only 2 large buttons: B and A)
+   * Multi-Touch sliding handler for Action Buttons (B and A)
+   * Allows rolling thumb seamlessly between B (run/shoot) and A (jump)
    */
-  const handleButtonDown = (
-    btn: "a" | "b" | "select" | "start",
-    e?: React.TouchEvent | React.PointerEvent
+  const updateActionButtonsFromTouches = useCallback(
+    (touches: React.TouchList) => {
+      let isOverA = false;
+      let isOverB = false;
+
+      const btnA = document.getElementById("touch-btn-a");
+      const btnB = document.getElementById("touch-btn-b");
+      const rectA = btnA?.getBoundingClientRect();
+      const rectB = btnB?.getBoundingClientRect();
+
+      // Generous touch hitboxes (+12px padding for easy thumb reach)
+      const hitMargin = 12;
+
+      for (let i = 0; i < touches.length; i++) {
+        const t = touches[i];
+        if (rectA) {
+          if (
+            t.clientX >= rectA.left - hitMargin &&
+            t.clientX <= rectA.right + hitMargin &&
+            t.clientY >= rectA.top - hitMargin &&
+            t.clientY <= rectA.bottom + hitMargin
+          ) {
+            isOverA = true;
+          }
+        }
+        if (rectB) {
+          if (
+            t.clientX >= rectB.left - hitMargin &&
+            t.clientX <= rectB.right + hitMargin &&
+            t.clientY >= rectB.top - hitMargin &&
+            t.clientY <= rectB.bottom + hitMargin
+          ) {
+            isOverB = true;
+          }
+        }
+      }
+
+      if (isOverA !== controller.touchState.a || isOverB !== controller.touchState.b) {
+        triggerHaptic(18);
+      }
+
+      controller.touchState.a = isOverA;
+      controller.touchState.b = isOverB;
+      setActiveButtons((prev) => ({ ...prev, a: isOverA, b: isOverB }));
+    },
+    [controller, triggerHaptic]
+  );
+
+  const handleActionAreaTouch = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    updateActionButtonsFromTouches(e.touches);
+  };
+
+  const handleActionAreaEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    updateActionButtonsFromTouches(e.touches);
+  };
+
+  const handleConsoleButton = (
+    btn: "select" | "start",
+    pressed: boolean,
+    e?: React.TouchEvent | React.MouseEvent
   ) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
-    triggerHaptic(20);
-    controller.touchState[btn] = true;
-    setActiveButtons((prev) => ({ ...prev, [btn]: true }));
+    if (pressed) triggerHaptic(22);
+    controller.touchState[btn] = pressed;
+    setActiveButtons((prev) => ({ ...prev, [btn]: pressed }));
   };
 
-  const handleButtonUp = (
-    btn: "a" | "b" | "select" | "start",
-    e?: React.TouchEvent | React.PointerEvent
-  ) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    controller.touchState[btn] = false;
-    setActiveButtons((prev) => ({ ...prev, [btn]: false }));
-  };
-
-  // Sizing styles with Extra Large Action Buttons
+  // Dimensions & sizes
   const sizeStyles = {
     compact: {
-      padHeight: "min-h-[220px]",
+      padHeight: "min-h-[210px]",
       stickSize: "w-36 h-36 sm:w-40 sm:h-40",
       btnSize: "w-18 h-18 sm:w-20 sm:h-20 text-2xl font-black",
     },
     normal: {
-      padHeight: "min-h-[260px]",
+      padHeight: "min-h-[250px]",
       stickSize: "w-44 h-44 sm:w-48 sm:h-48",
       btnSize: "w-22 h-22 sm:w-26 sm:h-26 text-3xl sm:text-4xl font-black",
     },
     large: {
-      padHeight: "min-h-[300px]",
+      padHeight: "min-h-[290px]",
       stickSize: "w-52 h-52 sm:w-56 sm:h-56",
       btnSize: "w-26 h-26 sm:w-30 sm:h-30 text-4xl sm:text-5xl font-black",
     },
@@ -282,34 +376,32 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
   return (
     <div
       id="touch-gamepad-container"
-      className={`w-full ${sizeStyles.padHeight} bg-gradient-to-b from-slate-900/95 via-slate-925 to-slate-950 border border-slate-800/90 rounded-2xl p-3 sm:p-4 shadow-2xl flex flex-col justify-between select-none touch-none`}
+      ref={containerRef}
+      className={`w-full ${sizeStyles.padHeight} bg-gradient-to-b from-slate-900/98 via-slate-925 to-slate-950 border border-slate-800 rounded-2xl p-2.5 sm:p-4 shadow-2xl flex flex-col justify-between select-none touch-none overscroll-none`}
       style={{
         touchAction: "none",
         WebkitTouchCallout: "none",
         WebkitUserSelect: "none",
         userSelect: "none",
       }}
-      onTouchMove={(e) => {
-        // Prevent all viewport bounce / screen scroll inside gamepad boundary
-        e.preventDefault();
-      }}
     >
-      {/* Top Controller Bar: Mode switch & Size config */}
-      <div className="flex items-center justify-between gap-2 mb-2 px-1">
-        {/* Stick Mode Switcher (Joystick vs D-Pad) */}
+      {/* Top Controller Configuration Bar */}
+      <div className="flex items-center justify-between gap-2 mb-1 px-1">
+        {/* Movement Mode Switcher (Dynamic Touch Stick vs 8-Way D-Pad) */}
         <button
           id="touch-toggle-stick-mode"
           onClick={() => {
-            setStickMode(stickMode === "joystick" ? "dpad" : "joystick");
+            const next = stickMode === "dynamic" ? "dpad" : "dynamic";
+            setStickMode(next);
             triggerHaptic(20);
           }}
-          className="px-3 py-1.5 bg-slate-800/90 hover:bg-slate-750 border border-slate-700/80 rounded-lg text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
-          title="Перемкнути тип керування рухом (Стік / Хрестовина)"
+          className="px-3 py-1.5 bg-slate-800/90 hover:bg-slate-750 border border-slate-700/80 rounded-lg text-xs font-semibold text-slate-200 flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer active:scale-95"
+          title="Перемкнути тип сенсорного керування рухом"
         >
-          {stickMode === "joystick" ? (
+          {stickMode === "dynamic" ? (
             <>
               <Compass className="w-4 h-4 text-indigo-400" />
-              <span>360° Стік</span>
+              <span>Динамічний стік</span>
             </>
           ) : (
             <>
@@ -320,333 +412,324 @@ export const TouchGamepad: React.FC<TouchGamepadProps> = ({
         </button>
 
         {/* Center Pad Configuration (Size & Haptics) */}
-        <div className="flex items-center gap-2 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
+        <div className="flex items-center gap-1.5 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
           <button
             onClick={() => {
-              const next = padSize === "compact" ? "normal" : padSize === "normal" ? "large" : "compact";
-              setPadSize(next);
-              triggerHaptic(15);
-            }}
-            className="px-2.5 py-1 text-xs font-mono text-slate-300 hover:text-white rounded flex items-center gap-1.5 cursor-pointer"
-            title="Змінити розмір кнопок"
-          >
-            {padSize === "large" ? (
-              <Minimize2 className="w-3.5 h-3.5 text-indigo-400" />
-            ) : (
-              <Maximize2 className="w-3.5 h-3.5 text-indigo-400" />
-            )}
-            <span className="capitalize font-semibold">{padSize}</span>
-          </button>
+            const next = padSize === "compact" ? "normal" : padSize === "normal" ? "large" : "compact";
+            setPadSize(next);
+            triggerHaptic(15);
+          }}
+          className="px-2 py-0.5 text-xs font-mono text-slate-300 hover:text-white rounded flex items-center gap-1 cursor-pointer active:scale-95"
+          title="Розмір сенсорних кнопок"
+        >
+          {padSize === "large" ? (
+            <Minimize2 className="w-3.5 h-3.5 text-indigo-400" />
+          ) : (
+            <Maximize2 className="w-3.5 h-3.5 text-indigo-400" />
+          )}
+          <span className="capitalize font-semibold">{padSize}</span>
+        </button>
 
-          <button
-            onClick={() => {
-              setHapticsEnabled(!hapticsEnabled);
-              triggerHaptic(25);
-            }}
-            className={`px-2 py-1 text-xs rounded font-bold transition-colors cursor-pointer ${
-              hapticsEnabled ? "text-amber-400 bg-amber-500/15" : "text-slate-500 hover:text-slate-400"
-            }`}
-            title="Вібровідгук (Vibration Haptics)"
-          >
-            VIB
-          </button>
-        </div>
-
-        {/* Local 2-Player Touch assignment selector */}
-        {controller.gamePlayMode === "local_2p" && (
-          <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800 text-[11px] font-bold">
-            <span className="text-slate-500 text-[10px] hidden sm:inline px-1">Touch:</span>
-            <button
-              onClick={() => {
-                controller.touchPlayerAssignment = 1;
-                setTouchPlayer(1);
-                triggerHaptic(20);
-              }}
-              className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                touchPlayer === 1
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-slate-400 hover:text-white"
-              }`}
-              title="Touch controls Player 1"
-            >
-              P1
-            </button>
-            <button
-              onClick={() => {
-                controller.touchPlayerAssignment = 2;
-                setTouchPlayer(2);
-                triggerHaptic(20);
-              }}
-              className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                touchPlayer === 2
-                  ? "bg-amber-600 text-white shadow-sm"
-                  : "text-slate-400 hover:text-white"
-              }`}
-              title="Touch controls Player 2"
-            >
-              P2
-            </button>
-          </div>
-        )}
+        <button
+          onClick={() => {
+            setHapticsEnabled(!hapticsEnabled);
+            triggerHaptic(25);
+          }}
+          className={`px-2 py-0.5 text-xs rounded font-bold transition-colors cursor-pointer active:scale-95 ${
+            hapticsEnabled ? "text-amber-400 bg-amber-500/15" : "text-slate-500 hover:text-slate-400"
+          }`}
+          title="Вібровідгук (Haptics)"
+        >
+          VIB
+        </button>
       </div>
 
-      {/* Main Interactive Touch Area */}
-      <div className="grid grid-cols-12 gap-2 sm:gap-6 items-center flex-1 my-1">
-        {/* LEFT AREA: Optimized Touch Movement (360° Thumbstick or D-Pad) */}
-        <div className="col-span-6 flex flex-col items-center justify-center relative">
-          <div
-            id="touch-movement-surface"
-            ref={stickAreaRef}
-            onTouchStart={handleStickTouchStart}
-            onTouchMove={handleStickTouchMove}
-            onTouchEnd={handleStickTouchEnd}
-            onTouchCancel={handleStickTouchEnd}
-            className={`${sizeStyles.stickSize} relative rounded-full bg-slate-950/90 border-2 border-slate-800/90 shadow-inner flex items-center justify-center touch-none cursor-grab active:cursor-grabbing transition-shadow`}
-            style={{
-              boxShadow: isStickActive
-                ? "inset 0 0 24px rgba(99, 102, 241, 0.35), 0 0 18px rgba(99, 102, 241, 0.2)"
-                : "inset 0 2px 12px rgba(0,0,0,0.7)",
+      {/* Local 2P Touch Assignment */}
+      {controller.gamePlayMode === "local_2p" && (
+        <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800 text-[11px] font-bold">
+          <span className="text-slate-500 text-[10px] hidden sm:inline px-1">Touch:</span>
+          <button
+            onClick={() => {
+              controller.touchPlayerAssignment = 1;
+              setTouchPlayer(1);
+              triggerHaptic(20);
             }}
+            className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+              touchPlayer === 1
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "text-slate-400 hover:text-white"
+            }`}
           >
-            {stickMode === "joystick" ? (
-              /* --- 360° Smooth Analog Thumbstick Mode --- */
-              <>
-                {/* 8-Directional Background Sector Guidelines */}
-                <div className="absolute inset-2 rounded-full border border-slate-800/50 pointer-events-none" />
-                <div className="absolute w-full h-0.5 bg-slate-800/30 pointer-events-none" />
-                <div className="absolute h-full w-0.5 bg-slate-800/30 pointer-events-none" />
+            P1
+          </button>
+          <button
+            onClick={() => {
+              controller.touchPlayerAssignment = 2;
+              setTouchPlayer(2);
+              triggerHaptic(20);
+            }}
+            className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+              touchPlayer === 2
+                ? "bg-amber-600 text-white shadow-sm"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            P2
+          </button>
+        </div>
+      )}
+    </div>
 
-                {/* Cardinal Direction Highlights */}
-                <span
-                  className={`absolute top-1.5 text-xs font-bold transition-colors ${
-                    activeDirections.up ? "text-indigo-400 font-extrabold scale-125" : "text-slate-600"
-                  }`}
-                >
-                  ▲
-                </span>
-                <span
-                  className={`absolute bottom-1.5 text-xs font-bold transition-colors ${
-                    activeDirections.down ? "text-indigo-400 font-extrabold scale-125" : "text-slate-600"
-                  }`}
-                >
-                  ▼
-                </span>
-                <span
-                  className={`absolute left-2 text-xs font-bold transition-colors ${
-                    activeDirections.left ? "text-indigo-400 font-extrabold scale-125" : "text-slate-600"
+    {/* Main Interactive Touch Controls Area */}
+    <div className="grid grid-cols-12 gap-2 sm:gap-6 items-center flex-1 my-1">
+      {/* LEFT: Touch Movement Pad (Floating Touch-Center / D-Pad) */}
+      <div className="col-span-6 flex flex-col items-center justify-center relative touch-none select-none">
+        <div
+          id="touch-movement-surface"
+          ref={stickAreaRef}
+          onTouchStart={handleStickTouchStart}
+          onTouchMove={handleStickTouchMove}
+          onTouchEnd={handleStickTouchEnd}
+          onTouchCancel={handleStickTouchEnd}
+          className={`${sizeStyles.stickSize} relative rounded-full bg-slate-950/95 border-2 border-slate-800/90 shadow-inner flex items-center justify-center touch-none cursor-grab active:cursor-grabbing transition-shadow`}
+          style={{
+            boxShadow: isStickActive
+              ? "inset 0 0 24px rgba(99, 102, 241, 0.45), 0 0 20px rgba(99, 102, 241, 0.25)"
+              : "inset 0 2px 14px rgba(0,0,0,0.8)",
+          }}
+        >
+          {stickMode === "dynamic" ? (
+            /* --- Dynamic 360° Touch Stick with Glowing Direction Chevrons --- */
+            <>
+              <div className="absolute inset-2 rounded-full border border-slate-800/60 pointer-events-none" />
+              <div className="absolute w-full h-0.5 bg-slate-800/30 pointer-events-none" />
+              <div className="absolute h-full w-0.5 bg-slate-800/30 pointer-events-none" />
+
+              {/* Directional Chevrons */}
+              <span
+                className={`absolute top-2 text-xs font-bold transition-all duration-75 pointer-events-none ${
+                  activeDirections.up ? "text-indigo-300 font-extrabold scale-140 drop-shadow-[0_0_8px_rgba(99,102,241,1)]" : "text-slate-600"
+                }`}
+              >
+                ▲
+              </span>
+              <span
+                className={`absolute bottom-2 text-xs font-bold transition-all duration-75 pointer-events-none ${
+                  activeDirections.down ? "text-indigo-300 font-extrabold scale-140 drop-shadow-[0_0_8px_rgba(99,102,241,1)]" : "text-slate-600"
+                }`}
+              >
+                ▼
+              </span>
+              <span
+                className={`absolute left-2.5 text-xs font-bold transition-all duration-75 pointer-events-none ${
+                  activeDirections.left ? "text-indigo-300 font-extrabold scale-140 drop-shadow-[0_0_8px_rgba(99,102,241,1)]" : "text-slate-600"
+                }`}
+              >
+                ◀
+              </span>
+              <span
+                className={`absolute right-2.5 text-xs font-bold transition-all duration-75 pointer-events-none ${
+                  activeDirections.right ? "text-indigo-300 font-extrabold scale-140 drop-shadow-[0_0_8px_rgba(99,102,241,1)]" : "text-slate-600"
+                }`}
+              >
+                ▶
+              </span>
+
+              {/* Visual Analog Knob smoothly anchored to thumb */}
+              <div
+                className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-800 border-2 border-indigo-300/80 shadow-lg flex items-center justify-center pointer-events-none transition-transform duration-75"
+                style={{
+                  transform: `translate(${stickOffset.x}px, ${stickOffset.y}px) ${
+                    isStickActive ? "scale(0.95)" : "scale(1)"
+                  }`,
+                  boxShadow: isStickActive
+                    ? "0 0 24px rgba(99, 102, 241, 0.9), inset 0 2px 6px rgba(255,255,255,0.5)"
+                    : "0 6px 14px rgba(0,0,0,0.7), inset 0 2px 4px rgba(255,255,255,0.35)",
+                }}
+              >
+                <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-indigo-950/80 border border-indigo-400/60 shadow-inner flex items-center justify-center">
+                  <div className="w-2 h-2 rounded-full bg-indigo-300" />
+                </div>
+              </div>
+            </>
+          ) : (
+            /* --- Classic 8-Way Cross D-Pad Mode --- */
+            <div className="relative w-full h-full flex items-center justify-center pointer-events-none">
+              <div className="absolute w-[88%] h-[34%] bg-slate-800/90 border border-slate-700/80 rounded-md shadow flex justify-between items-center px-1.5">
+                <div
+                  className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
+                    activeDirections.left
+                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
+                      : "text-slate-400"
                   }`}
                 >
                   ◀
-                </span>
-                <span
-                  className={`absolute right-2 text-xs font-bold transition-colors ${
-                    activeDirections.right ? "text-indigo-400 font-extrabold scale-125" : "text-slate-600"
+                </div>
+                <div
+                  className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
+                    activeDirections.right
+                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
+                      : "text-slate-400"
                   }`}
                 >
                   ▶
-                </span>
-
-                {/* Floating Analog Stick Knob */}
-                <div
-                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-800 border-2 border-indigo-300/80 shadow-lg flex items-center justify-center transition-transform duration-75 pointer-events-none"
-                  style={{
-                    transform: `translate(${stickOffset.x}px, ${stickOffset.y}px) ${
-                      isStickActive ? "scale(0.95)" : "scale(1)"
-                    }`,
-                    boxShadow: isStickActive
-                      ? "0 0 20px rgba(99, 102, 241, 0.8), inset 0 2px 5px rgba(255,255,255,0.4)"
-                      : "0 6px 12px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.3)",
-                  }}
-                >
-                  <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-indigo-900/80 border border-indigo-400/50 shadow-inner" />
-                </div>
-              </>
-            ) : (
-              /* --- Classic 8-Way Precision Cross D-Pad Mode --- */
-              <div className="relative w-full h-full flex items-center justify-center pointer-events-none">
-                {/* Horizontal Bar */}
-                <div className="absolute w-[88%] h-[34%] bg-slate-800/90 border border-slate-700/80 rounded-md shadow flex justify-between items-center px-1.5">
-                  <div
-                    className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
-                      activeDirections.left
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    ◀
-                  </div>
-                  <div
-                    className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
-                      activeDirections.right
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    ▶
-                  </div>
-                </div>
-
-                {/* Vertical Bar */}
-                <div className="absolute h-[88%] w-[34%] bg-slate-800/90 border border-slate-700/80 rounded-md shadow flex flex-col justify-between items-center py-1.5">
-                  <div
-                    className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
-                      activeDirections.up
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    ▲
-                  </div>
-                  <div
-                    className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
-                      activeDirections.down
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    ▼
-                  </div>
-                </div>
-
-                {/* Center Core */}
-                <div
-                  className={`w-[34%] h-[34%] z-10 rounded-full border border-slate-600 flex items-center justify-center shadow-inner transition-colors ${
-                    isStickActive ? "bg-indigo-600/40" : "bg-slate-900"
-                  }`}
-                >
-                  <div className="w-3 h-3 rounded-full bg-slate-600" />
                 </div>
               </div>
-            )}
-          </div>
-        </div>
 
-        {/* RIGHT AREA: Exactly TWO Large Action Buttons (B and A) positioned at 45° angle */}
-        <div className="col-span-6 flex items-center justify-center touch-none py-3">
-          <div
-            className="flex items-center justify-center gap-5 sm:gap-7 -rotate-45 transform"
-            style={{ touchAction: "none" }}
-          >
-            {/* LARGE B BUTTON (Bottom-Left at 45°) */}
-            <button
-              id="touch-btn-b"
-              onTouchStart={(e) => handleButtonDown("b", e)}
-              onTouchEnd={(e) => handleButtonUp("b", e)}
-              onTouchCancel={(e) => handleButtonUp("b", e)}
-              onPointerDown={(e) => handleButtonDown("b", e)}
-              onPointerUp={(e) => handleButtonUp("b", e)}
-              className={`${sizeStyles.btnSize} shrink-0 rounded-full border-3 flex items-center justify-center cursor-pointer select-none ${
-                activeButtons.b
-                  ? "bg-rose-700 border-rose-400 text-white"
-                  : "bg-gradient-to-b from-rose-500 via-rose-600 to-rose-700 border-rose-300/90 text-white hover:brightness-105"
-              }`}
-              style={{
-                transform: "none",
-                boxShadow: activeButtons.b
-                  ? "inset 0 4px 8px rgba(0,0,0,0.65), 0 1px 2px rgba(0,0,0,0.4)"
-                  : "0 6px 14px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.35)",
-              }}
-              title="Button B"
-            >
-              <span className="rotate-45 transform inline-block select-none pointer-events-none">B</span>
-            </button>
+              <div className="absolute h-[88%] w-[34%] bg-slate-800/90 border border-slate-700/80 rounded-md shadow flex flex-col justify-between items-center py-1.5">
+                <div
+                  className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
+                    activeDirections.up
+                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
+                      : "text-slate-400"
+                  }`}
+                >
+                  ▲
+                </div>
+                <div
+                  className={`w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
+                    activeDirections.down
+                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/50"
+                      : "text-slate-400"
+                  }`}
+                >
+                  ▼
+                </div>
+              </div>
 
-            {/* LARGE A BUTTON (Top-Right at 45°) */}
-            <button
-              id="touch-btn-a"
-              onTouchStart={(e) => handleButtonDown("a", e)}
-              onTouchEnd={(e) => handleButtonUp("a", e)}
-              onTouchCancel={(e) => handleButtonUp("a", e)}
-              onPointerDown={(e) => handleButtonDown("a", e)}
-              onPointerUp={(e) => handleButtonUp("a", e)}
-              className={`${sizeStyles.btnSize} shrink-0 rounded-full border-3 flex items-center justify-center cursor-pointer select-none ${
-                activeButtons.a
-                  ? "bg-emerald-700 border-emerald-400 text-white"
-                  : "bg-gradient-to-b from-emerald-500 via-emerald-600 to-emerald-700 border-emerald-300/90 text-white hover:brightness-105"
-              }`}
-              style={{
-                transform: "none",
-                boxShadow: activeButtons.a
-                  ? "inset 0 4px 8px rgba(0,0,0,0.65), 0 1px 2px rgba(0,0,0,0.4)"
-                  : "0 6px 14px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.35)",
-              }}
-              title="Button A"
-            >
-              <span className="rotate-45 transform inline-block select-none pointer-events-none">A</span>
-            </button>
-          </div>
+              <div
+                className={`w-[34%] h-[34%] z-10 rounded-full border border-slate-600 flex items-center justify-center shadow-inner transition-colors ${
+                  isStickActive ? "bg-indigo-600/40" : "bg-slate-900"
+                }`}
+              >
+                <div className="w-3 h-3 rounded-full bg-slate-600" />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Bottom Center Console: SELECT, START & Quick Utility Buttons */}
-      <div className="flex items-center justify-between border-t border-slate-800/80 pt-2.5 mt-2 px-1">
-        {/* Left utility (Reset / Restart) */}
-        <div className="flex items-center gap-1.5">
-          {onReset && (
-            <button
-              id="touch-quick-reset-btn"
-              onClick={onReset}
-              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 rounded-lg border border-slate-700 text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Перезапуск гри"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Скинути</span>
-            </button>
-          )}
-        </div>
-
-        {/* Center Rubber Console Switches: SELECT & START */}
-        <div className="flex items-center gap-4 sm:gap-6 bg-slate-950/90 px-4 sm:px-6 py-1.5 rounded-full border border-slate-800 shadow-inner">
-          {/* SELECT Button */}
+      {/* RIGHT: Slide-friendly Action Buttons (B and A) angled at 45° */}
+      <div
+        ref={actionAreaRef}
+        onTouchStart={handleActionAreaTouch}
+        onTouchMove={handleActionAreaTouch}
+        onTouchEnd={handleActionAreaEnd}
+        onTouchCancel={handleActionAreaEnd}
+        className="col-span-6 flex items-center justify-center touch-none py-3"
+      >
+        <div
+          className="flex items-center justify-center gap-5 sm:gap-7 -rotate-45 transform pointer-events-auto"
+          style={{ touchAction: "none" }}
+        >
+          {/* LARGE B BUTTON */}
           <button
-            id="touch-btn-select"
-            onTouchStart={(e) => handleButtonDown("select", e)}
-            onTouchEnd={(e) => handleButtonUp("select", e)}
-            onTouchCancel={(e) => handleButtonUp("select", e)}
-            onPointerDown={(e) => handleButtonDown("select", e)}
-            onPointerUp={(e) => handleButtonUp("select", e)}
-            className={`px-3.5 py-1.5 rounded-full border text-xs font-mono font-bold tracking-wider uppercase transition-all active:scale-95 cursor-pointer ${
-              activeButtons.select
-                ? "bg-sky-600 text-white border-sky-400 shadow-sky-500/50 scale-95"
-                : "bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200"
+            id="touch-btn-b"
+            className={`${sizeStyles.btnSize} shrink-0 rounded-full border-3 flex items-center justify-center cursor-pointer select-none transition-transform active:scale-95 ${
+              activeButtons.b
+                ? "bg-rose-700 border-rose-400 text-white scale-95 shadow-[0_0_20px_rgba(244,63,94,0.7)]"
+                : "bg-gradient-to-b from-rose-500 via-rose-600 to-rose-700 border-rose-300/90 text-white hover:brightness-105"
             }`}
+            style={{
+              boxShadow: activeButtons.b
+                ? "inset 0 4px 8px rgba(0,0,0,0.65), 0 1px 2px rgba(0,0,0,0.4)"
+                : "0 6px 16px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.4)",
+            }}
+            title="Button B (Z / Run / Shoot)"
           >
-            SELECT
+            <span className="rotate-45 transform inline-block select-none pointer-events-none font-black">B</span>
           </button>
 
-          {/* START Button */}
+          {/* LARGE A BUTTON */}
           <button
-            id="touch-btn-start"
-            onTouchStart={(e) => handleButtonDown("start", e)}
-            onTouchEnd={(e) => handleButtonUp("start", e)}
-            onTouchCancel={(e) => handleButtonUp("start", e)}
-            onPointerDown={(e) => handleButtonDown("start", e)}
-            onPointerUp={(e) => handleButtonUp("start", e)}
-            className={`px-4 py-1.5 rounded-full border text-xs font-mono font-bold tracking-wider uppercase transition-all active:scale-95 cursor-pointer ${
-              activeButtons.start
-                ? "bg-emerald-600 text-white border-emerald-400 shadow-emerald-500/50 scale-95"
-                : "bg-slate-800 text-emerald-400 border-slate-700 hover:bg-slate-750"
+            id="touch-btn-a"
+            className={`${sizeStyles.btnSize} shrink-0 rounded-full border-3 flex items-center justify-center cursor-pointer select-none transition-transform active:scale-95 ${
+              activeButtons.a
+                ? "bg-emerald-700 border-emerald-400 text-white scale-95 shadow-[0_0_20px_rgba(16,185,129,0.7)]"
+                : "bg-gradient-to-b from-emerald-500 via-emerald-600 to-emerald-700 border-emerald-300/90 text-white hover:brightness-105"
             }`}
+            style={{
+              boxShadow: activeButtons.a
+                ? "inset 0 4px 8px rgba(0,0,0,0.65), 0 1px 2px rgba(0,0,0,0.4)"
+                : "0 6px 16px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.4)",
+            }}
+            title="Button A (X / Jump)"
           >
-            START
+            <span className="rotate-45 transform inline-block select-none pointer-events-none font-black">A</span>
           </button>
-        </div>
-
-        {/* Right utility (Main In-Game Menu) */}
-        <div className="flex items-center gap-1.5">
-          {onOpenMenu && (
-            <button
-              id="touch-quick-menu-btn"
-              onClick={onOpenMenu}
-              className="px-2.5 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 rounded-lg border border-amber-500/30 text-xs flex items-center gap-1.5 transition-colors font-bold cursor-pointer"
-              title="Головне меню гри (ESC)"
-            >
-              <Menu className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Меню</span>
-            </button>
-          )}
         </div>
       </div>
     </div>
-  );
+
+    {/* Bottom Center Bar: SELECT, START, Reset & Menu */}
+    <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 mt-1 px-1">
+      {/* Reset */}
+      <div className="flex items-center gap-1.5">
+        {onReset && (
+          <button
+            id="touch-quick-reset-btn"
+            onClick={onReset}
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 rounded-lg border border-slate-700 text-xs flex items-center gap-1.5 transition-colors cursor-pointer active:scale-95"
+            title="Перезапуск гри"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Скинути</span>
+          </button>
+        )}
+      </div>
+
+      {/* Rubber Console Switches: SELECT & START */}
+      <div className="flex items-center gap-4 sm:gap-6 bg-slate-950/90 px-4 sm:px-6 py-1.5 rounded-full border border-slate-800 shadow-inner">
+        {/* SELECT */}
+        <button
+          id="touch-btn-select"
+          onTouchStart={(e) => handleConsoleButton("select", true, e)}
+          onTouchEnd={(e) => handleConsoleButton("select", false, e)}
+          onTouchCancel={(e) => handleConsoleButton("select", false, e)}
+          onMouseDown={(e) => handleConsoleButton("select", true, e)}
+          onMouseUp={(e) => handleConsoleButton("select", false, e)}
+          className={`px-3.5 py-1.5 rounded-full border text-xs font-mono font-bold tracking-wider uppercase transition-all active:scale-95 cursor-pointer ${
+            activeButtons.select
+              ? "bg-sky-600 text-white border-sky-400 shadow-sky-500/50 scale-95"
+              : "bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200"
+          }`}
+        >
+          SELECT
+        </button>
+
+        {/* START */}
+        <button
+          id="touch-btn-start"
+          onTouchStart={(e) => handleConsoleButton("start", true, e)}
+          onTouchEnd={(e) => handleConsoleButton("start", false, e)}
+          onTouchCancel={(e) => handleConsoleButton("start", false, e)}
+          onMouseDown={(e) => handleConsoleButton("start", true, e)}
+          onMouseUp={(e) => handleConsoleButton("start", false, e)}
+          className={`px-4 py-1.5 rounded-full border text-xs font-mono font-bold tracking-wider uppercase transition-all active:scale-95 cursor-pointer ${
+            activeButtons.start
+              ? "bg-emerald-600 text-white border-emerald-400 shadow-emerald-500/50 scale-95"
+              : "bg-slate-800 text-emerald-400 border-slate-700 hover:bg-slate-750"
+          }`}
+        >
+          START
+        </button>
+      </div>
+
+      {/* Menu */}
+      <div className="flex items-center gap-1.5">
+        {onOpenMenu && (
+          <button
+            id="touch-quick-menu-btn"
+            onClick={onOpenMenu}
+            className="px-2.5 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 rounded-lg border border-amber-500/30 text-xs flex items-center gap-1.5 transition-colors font-bold cursor-pointer active:scale-95"
+            title="Головне меню гри"
+          >
+            <Menu className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Меню</span>
+          </button>
+        )}
+      </div>
+    </div>
+  </div>
+);
 };

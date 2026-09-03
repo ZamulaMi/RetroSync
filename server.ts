@@ -178,8 +178,19 @@ const SYSTEM_DEFAULT_GAMES: Record<string, { id: string; title: string; system: 
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   const server = http.createServer(app);
+
+  // Open CORS & Preflight handling
+  app.use((_req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (_req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
 
   app.use(express.json({ limit: "50mb" }));
 
@@ -322,29 +333,34 @@ async function startServer() {
     try {
       const q = (typeof req.query.q === "string" ? req.query.q : "").trim().toLowerCase();
       
+      // Ensure seeded lobby rooms exist if empty
+      if (rooms.size === 0) {
+        seedInitialLobbyRooms();
+      }
+
       const allRooms = Array.from(rooms.values());
       const mapped = allRooms.map((r) => ({
-        id: r.id, // 4-character code (e.g. "BC85")
-        code: r.id,
-        roomNumber: r.roomNumber || "", // 6-digit number (e.g. "852401")
-        name: r.name,
-        hostId: r.hostId,
-        gameTitle: r.gameTitle,
-        gameId: r.gameId,
-        system: r.system,
-        netplayMode: r.netplayMode,
-        playerCount: r.participants.size,
-        hasPlayer1: Array.from(r.participants.values()).some((p) => p.role === "player1"),
-        hasPlayer2: Array.from(r.participants.values()).some((p) => p.role === "player2"),
-        isPrivate: r.isPrivate,
-        createdAt: r.createdAt,
+        id: r.id || "",
+        code: r.id || "",
+        roomNumber: r.roomNumber || "",
+        name: r.name || "Retro Room",
+        hostId: r.hostId || "",
+        gameTitle: r.gameTitle || "Retro Game",
+        gameId: r.gameId || "",
+        system: r.system || "NES",
+        netplayMode: r.netplayMode || "rollback",
+        playerCount: r.participants ? r.participants.size : 0,
+        hasPlayer1: r.participants ? Array.from(r.participants.values()).some((p) => p.role === "player1") : false,
+        hasPlayer2: r.participants ? Array.from(r.participants.values()).some((p) => p.role === "player2") : false,
+        isPrivate: !!r.isPrivate,
+        createdAt: r.createdAt || Date.now(),
       }));
 
       let results = mapped;
       if (q) {
         results = mapped.filter((r) => {
-          const codeMatch = r.id.toLowerCase() === q || r.id.toLowerCase().includes(q);
-          const numMatch = r.roomNumber.toLowerCase() === q || r.roomNumber.toLowerCase().includes(q);
+          const codeMatch = (r.id || "").toLowerCase().includes(q);
+          const numMatch = (r.roomNumber || "").toLowerCase().includes(q);
           const titleMatch = (r.gameTitle || "").toLowerCase().includes(q);
           const nameMatch = (r.name || "").toLowerCase().includes(q);
           const sysMatch = (r.system || "").toLowerCase().includes(q);
@@ -360,7 +376,74 @@ async function startServer() {
       res.setHeader("Content-Type", "application/json");
       res.json(results);
     } catch (err: any) {
+      console.error("Failed to search rooms:", err);
       res.status(500).json({ error: "Failed to search rooms", details: err?.message });
+    }
+  });
+
+  // REST API: Get specific room details by 4-character code or 5-digit number
+  app.get("/api/rooms/:id", (req, res) => {
+    try {
+      const room = findRoom(req.params.id);
+      if (!room) {
+        return res.status(404).json({ error: "Room not found" });
+      }
+      res.json(sanitizeRoom(room));
+    } catch (err: any) {
+      res.status(500).json({ error: "Error retrieving room", details: err?.message });
+    }
+  });
+
+  // REST API: Create room (immediate fallback if WebSocket is slow or disconnected)
+  app.post("/api/rooms/create", (req, res) => {
+    try {
+      const {
+        roomName,
+        gameTitle,
+        gameId,
+        system,
+        netplayMode,
+        isPrivate,
+        username,
+        supportedGames,
+      } = req.body || {};
+
+      const newRoomId = generateRoomCode();
+      const newRoomNumber = generateRoomNumber();
+      const hostPeerId = "host_" + Math.random().toString(36).substring(2, 9);
+
+      const newRoom: Room = {
+        id: newRoomId,
+        roomNumber: newRoomNumber,
+        name: (roomName || "").trim() || `Кімната ${username || "Host"}`,
+        hostId: hostPeerId,
+        gameTitle: gameTitle || "Retro 2P Game",
+        gameId: gameId || "nes-netplay-arena-2p",
+        system: system || "NES",
+        netplayMode: netplayMode || "rollback",
+        frameDelay: 2,
+        isPrivate: !!isPrivate,
+        inviteToken: Math.random().toString(36).substring(2, 12),
+        supportedGames: Array.isArray(supportedGames) ? supportedGames : ["ANY"],
+        participants: new Map(),
+        createdAt: Date.now(),
+      };
+
+      rooms.set(newRoomId, newRoom);
+      roomsByNumber.set(newRoomNumber, newRoom);
+
+      console.log(`[REST API] Created room #${newRoomNumber} (${newRoomId}): "${newRoom.name}"`);
+
+      res.json({
+        success: true,
+        room: sanitizeRoom(newRoom),
+        code: newRoomId,
+        roomNumber: newRoomNumber,
+        peerId: hostPeerId,
+      });
+    } catch (err: any) {
+      console.error("Failed to create room via REST:", err);
+      res.status(500).json({ error: "Failed to create room", details: err?.message });
     }
   });
 
@@ -559,13 +642,19 @@ async function startServer() {
 
   server.on("upgrade", (request, socket, head) => {
     try {
-      const url = new URL(request.url || "", `http://${request.headers.host || "localhost"}`);
-      if (url.pathname === "/ws" || url.pathname === "/ws/") {
+      const rawUrl = request.url || "";
+      const pathname = rawUrl.split("?")[0] || "/";
+      if (
+        pathname === "/ws" ||
+        pathname === "/ws/" ||
+        pathname.endsWith("/ws") ||
+        pathname.endsWith("/ws/")
+      ) {
         wss.handleUpgrade(request, socket, head, (ws) => {
           wss.emit("connection", ws, request);
         });
       } else {
-        // If it's not a /ws request and Vite dev server is running, Vite might handle its own or ignore
+        // Not a /ws request (could be Vite HMR or other upgrade)
       }
     } catch (err) {
       console.error("WebSocket upgrade error:", err);
@@ -810,6 +899,9 @@ async function startServer() {
             if (!currentRoomId) return;
             const room = rooms.get(currentRoomId);
             if (!room) return;
+            if (data.name && typeof data.name === "string") {
+              room.name = data.name.trim() || room.name;
+            }
             room.gameTitle = data.gameTitle || room.gameTitle;
             room.gameId = data.gameId || room.gameId;
             room.system = data.system || room.system;
@@ -820,6 +912,7 @@ async function startServer() {
 
             broadcastToRoom(room, {
               type: "game-updated",
+              name: room.name,
               gameTitle: room.gameTitle,
               gameId: room.gameId,
               system: room.system,
@@ -994,15 +1087,30 @@ async function startServer() {
     };
   }
 
-  // Vite middleware setup
-  if (process.env.NODE_ENV !== "production") {
+  // Vite middleware setup (auto-detects production container / dist bundle execution)
+  const isProd =
+    process.env.NODE_ENV === "production" ||
+    !fs.existsSync(path.join(process.cwd(), "src", "main.tsx")) ||
+    (typeof __filename !== "undefined" && (__filename.endsWith(".cjs") || __filename.includes("dist")));
+
+  if (!isProd) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const possibleDistDirs = [
+      path.join(process.cwd(), "dist"),
+      path.join(appDir, "dist"),
+      process.cwd(),
+      appDir,
+    ];
+    const distPath =
+      possibleDistDirs.find((dir) => fs.existsSync(path.join(dir, "index.html"))) ||
+      path.join(process.cwd(), "dist");
+
+    console.log(`[Production Server] Serving client app from: ${distPath}`);
     app.use(express.static(distPath));
     app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
