@@ -5,6 +5,12 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer as createViteServer } from "vite";
+import {
+  DistributedMatchmaker,
+  WaitingPlayer,
+  MatchPairResult,
+  SignalingPayload,
+} from "./src/server/matchmaker";
 
 const getAppDir = () => {
   try {
@@ -47,17 +53,6 @@ interface Room {
   emptySince?: number;
 }
 
-interface MatchmakingTicket {
-  ticketId: string;
-  peerId: string;
-  ws: WebSocket;
-  username: string;
-  consoleSystem: string; // "NES" | "SNES" | "GBA" | "GB" | "GBC" | "ANY"
-  supportedGames: string[]; // ["nes-netplay-arena-2p", ...] or ["ANY"]
-  netplayMode: "rollback" | "lockstep";
-  joinedAt: number;
-}
-
 interface SocketSession {
   roomId: string | null;
   peerId: string | null;
@@ -67,8 +62,28 @@ interface SocketSession {
 
 const rooms = new Map<string, Room>();
 const roomsByNumber = new Map<string, Room>();
-const matchmakingQueue = new Map<string, MatchmakingTicket>();
 const socketSessions = new Map<WebSocket, SocketSession>();
+
+// Distributed Matchmaker Architecture & Multi-Node Mapping
+const matchmaker = new DistributedMatchmaker({
+  nodeId: process.env.NODE_ID,
+  redisUrl: process.env.REDIS_URL,
+  maxRecentPairs: 5,
+  botTimeoutMs: 3500,
+});
+
+const peerIdToWs = new Map<string, WebSocket>();
+const socketIdToWs = new Map<string, WebSocket>();
+const wsToSocketId = new Map<WebSocket, string>();
+const playerMetadata = new Map<
+  string,
+  {
+    username: string;
+    consoleSystem: string;
+    supportedGames: string[];
+    netplayMode: "rollback" | "lockstep";
+  }
+>();
 
 function setSocketRoom(ws: WebSocket, roomId: string | null, peerId?: string | null, username?: string) {
   let session = socketSessions.get(ws);
@@ -335,11 +350,11 @@ async function startServer() {
   }
 
   // REST API Routes
-  app.get("/api/health", (_req, res) => {
+  app.get("/api/health", async (_req, res) => {
     res.json({
       status: "ok",
       activeRooms: rooms.size,
-      matchmakingQueueLength: matchmakingQueue.size,
+      matchmakingQueueLength: await matchmaker.getQueueLength(),
       timestamp: Date.now(),
     });
   });
@@ -561,387 +576,203 @@ async function startServer() {
   });
 
   // Get Matchmaking queue telemetry & global network status
-  app.get("/api/matchmaking/stats", (_req, res) => {
+  app.get("/api/matchmaking/stats", async (_req, res) => {
     let totalPlayers = 0;
     for (const r of rooms.values()) {
       totalPlayers += r.participants.size;
     }
-    totalPlayers += matchmakingQueue.size;
+    const qLen = await matchmaker.getQueueLength();
+    totalPlayers += qLen;
 
     res.json({
-      queueLength: matchmakingQueue.size,
+      queueLength: qLen,
       activeRooms: rooms.size,
       onlinePlayers: Math.max(totalPlayers, 1),
+      nodeId: matchmaker.nodeId,
       cellularRelayActive: true,
       timestamp: Date.now(),
     });
   });
 
-  // Matchmaking Resolution Engine
-  function tryMatchmaking() {
-    if (matchmakingQueue.size === 0) return;
+  // Distributed Matchmaker Event Subscriptions (Cluster-wide via Redis Pub/Sub)
+  matchmaker.onMatchFound = (match: MatchPairResult) => {
+    const { roomId, roomNumber, player1, player2, isBot } = match;
 
-    const tickets = Array.from(matchmakingQueue.values());
-    const now = Date.now();
+    const meta1 = playerMetadata.get(player1.peerId) || {
+      username: player1.peerId.startsWith("bot_") ? "RetroPro_UA 🇺🇦" : "Player 1",
+      consoleSystem: "NES",
+      supportedGames: ["ANY"],
+      netplayMode: "rollback",
+    };
+    const meta2 = playerMetadata.get(player2.peerId) || {
+      username: player2.peerId.startsWith("bot_") ? "CyberChallenger 🤖" : "Player 2",
+      consoleSystem: "NES",
+      supportedGames: ["ANY"],
+      netplayMode: "rollback",
+    };
 
-    // 1. Pair two waiting human players
-    for (let i = 0; i < tickets.length; i++) {
-      const ticketA = tickets[i];
-      if (!matchmakingQueue.has(ticketA.peerId)) continue;
-      if (ticketA.ws.readyState !== WebSocket.OPEN) {
-        matchmakingQueue.delete(ticketA.peerId);
-        continue;
-      }
+    const matchedSystem =
+      meta1.consoleSystem !== "ANY"
+        ? meta1.consoleSystem
+        : meta2.consoleSystem !== "ANY"
+        ? meta2.consoleSystem
+        : "NES";
 
-      for (let j = i + 1; j < tickets.length; j++) {
-        const ticketB = tickets[j];
-        if (!matchmakingQueue.has(ticketB.peerId)) continue;
-        if (ticketB.ws.readyState !== WebSocket.OPEN) {
-          matchmakingQueue.delete(ticketB.peerId);
-          continue;
-        }
-
-        // Check console system compatibility
-        const systemMatch =
-          ticketA.consoleSystem === "ANY" ||
-          ticketB.consoleSystem === "ANY" ||
-          ticketA.consoleSystem === ticketB.consoleSystem;
-
-        if (!systemMatch) continue;
-
-        // Check supported games compatibility
-        const aHasAnyGame =
-          ticketA.supportedGames.length === 0 || ticketA.supportedGames.includes("ANY");
-        const bHasAnyGame =
-          ticketB.supportedGames.length === 0 || ticketB.supportedGames.includes("ANY");
-
-        let matchedGameId = "nes-netplay-arena-2p";
-        let matchedGameTitle = "Retro 2P Combat Arena (NES)";
-        let matchedSystem = "NES";
-
-        let gamesCompatible = false;
-        if (aHasAnyGame && bHasAnyGame) {
-          gamesCompatible = true;
-          const chosenSys =
-            ticketA.consoleSystem !== "ANY"
-              ? ticketA.consoleSystem
-              : ticketB.consoleSystem !== "ANY"
-              ? ticketB.consoleSystem
-              : "NES";
-          const fallback = SYSTEM_DEFAULT_GAMES[chosenSys] || SYSTEM_DEFAULT_GAMES.NES;
-          matchedGameId = fallback.id;
-          matchedGameTitle = fallback.title;
-          matchedSystem = fallback.system;
-        } else if (aHasAnyGame && !bHasAnyGame) {
-          gamesCompatible = true;
-          matchedGameId = ticketB.supportedGames[0];
-          matchedSystem = ticketB.consoleSystem !== "ANY" ? ticketB.consoleSystem : "NES";
-          matchedGameTitle = `Netplay Duel (${matchedSystem})`;
-        } else if (!aHasAnyGame && bHasAnyGame) {
-          gamesCompatible = true;
-          matchedGameId = ticketA.supportedGames[0];
-          matchedSystem = ticketA.consoleSystem !== "ANY" ? ticketA.consoleSystem : "NES";
-          matchedGameTitle = `Netplay Duel (${matchedSystem})`;
-        } else {
-          // Both have specific game lists - check intersection
-          const intersection = ticketA.supportedGames.filter((g) =>
-            ticketB.supportedGames.includes(g)
-          );
-          if (intersection.length > 0) {
-            gamesCompatible = true;
-            matchedGameId = intersection[0];
-            matchedSystem = ticketA.consoleSystem !== "ANY" ? ticketA.consoleSystem : "NES";
-            matchedGameTitle = `Netplay Duel (${matchedSystem})`;
-          }
-        }
-
-        if (!gamesCompatible) continue;
-
-        // Both players are compatible! Create a Match Room!
-        matchmakingQueue.delete(ticketA.peerId);
-        matchmakingQueue.delete(ticketB.peerId);
-
-        const matchRoomId = generateRoomCode();
-        const matchRoomNumber = generateRoomNumber();
-        const mode =
-          ticketA.netplayMode === "lockstep" && ticketB.netplayMode === "lockstep"
-            ? "lockstep"
-            : "rollback";
-
-        const newRoom: Room = {
-          id: matchRoomId,
-          roomNumber: matchRoomNumber,
-          name: `Quick Match: ${ticketA.username} vs ${ticketB.username}`,
-          hostId: ticketA.peerId,
-          gameTitle: matchedGameTitle,
-          gameId: matchedGameId,
-          system: matchedSystem,
-          netplayMode: mode,
-          frameDelay: 2,
-          isPrivate: false,
-          participants: new Map(),
-          createdAt: Date.now(),
-        };
-
-        const participantA: RoomParticipant = {
-          ws: ticketA.ws,
-          peerId: ticketA.peerId,
-          username: ticketA.username,
-          role: "player1",
-          isReady: true,
-          ping: 0,
-        };
-
-        const participantB: RoomParticipant = {
-          ws: ticketB.ws,
-          peerId: ticketB.peerId,
-          username: ticketB.username,
-          role: "player2",
-          isReady: true,
-          ping: 0,
-        };
-
-        newRoom.participants.set(ticketA.peerId, participantA);
-        newRoom.participants.set(ticketB.peerId, participantB);
-        rooms.set(matchRoomId, newRoom);
-        roomsByNumber.set(matchRoomNumber, newRoom);
-
-        // Crucial: Bind socket sessions so input relay & WebRTC work immediately!
-        setSocketRoom(ticketA.ws, matchRoomId, ticketA.peerId, ticketA.username);
-        setSocketRoom(ticketB.ws, matchRoomId, ticketB.peerId, ticketB.username);
-
-        // Notify Player 1 (Host)
-        ticketA.ws.send(
-          JSON.stringify({
-            type: "match-found",
-            roomId: matchRoomId,
-            code: matchRoomId,
-            roomNumber: matchRoomNumber,
-            peerId: ticketA.peerId,
-            role: "player1",
-            opponentName: ticketB.username,
-            gameId: matchedGameId,
-            gameTitle: matchedGameTitle,
-            system: matchedSystem,
-            netplayMode: mode,
-            room: sanitizeRoom(newRoom),
-          })
-        );
-
-        // Notify Player 2 (Challenger)
-        ticketB.ws.send(
-          JSON.stringify({
-            type: "match-found",
-            roomId: matchRoomId,
-            code: matchRoomId,
-            roomNumber: matchRoomNumber,
-            peerId: ticketB.peerId,
-            role: "player2",
-            opponentName: ticketA.username,
-            gameId: matchedGameId,
-            gameTitle: matchedGameTitle,
-            system: matchedSystem,
-            netplayMode: mode,
-            room: sanitizeRoom(newRoom),
-          })
-        );
-
-        console.log(
-          `[Matchmaking] Paired ${ticketA.username} (P1) and ${ticketB.username} (P2) into ${matchRoomId} for ${matchedGameTitle}`
-        );
-        break;
-      }
+    let matchedGameId = "nes-netplay-arena-2p";
+    if (meta1.supportedGames[0] && meta1.supportedGames[0] !== "ANY") {
+      matchedGameId = meta1.supportedGames[0];
+    } else if (meta2.supportedGames[0] && meta2.supportedGames[0] !== "ANY") {
+      matchedGameId = meta2.supportedGames[0];
+    } else if (matchedSystem === "GB" || matchedSystem === "GBC") {
+      matchedGameId = "gb-link-battle";
     }
 
-    // 2. Check if waiting ticket can join an open room that needs Player 2
-    for (const ticket of matchmakingQueue.values()) {
-      if (ticket.ws.readyState !== WebSocket.OPEN) {
-        matchmakingQueue.delete(ticket.peerId);
-        continue;
-      }
+    const matchedGameTitle =
+      matchedGameId === "gb-link-battle"
+        ? "Game Boy Link Duel (GB)"
+        : matchedGameId === "nes-netplay-pong"
+        ? "Hyper Pong Championship (NES)"
+        : matchedGameId === "nes-battle-city"
+        ? "Battle City (1985)"
+        : "Retro 2P Combat Arena (NES)";
 
-      for (const openRoom of rooms.values()) {
-        if (!openRoom.isPrivate && openRoom.participants.size === 1) {
-          const [hostPeerId, hostParticipant] = Array.from(openRoom.participants.entries())[0];
-          if (hostPeerId === ticket.peerId) continue;
+    const newRoom: Room = {
+      id: roomId,
+      roomNumber,
+      name: `Match: ${meta1.username} vs ${meta2.username}`,
+      hostId: player1.peerId,
+      gameTitle: matchedGameTitle,
+      gameId: matchedGameId,
+      system: matchedSystem,
+      netplayMode:
+        meta1.netplayMode === "lockstep" && meta2.netplayMode === "lockstep"
+          ? "lockstep"
+          : "rollback",
+      frameDelay: 2,
+      isPrivate: false,
+      inviteToken: "inv_" + Math.random().toString(36).substring(2, 10),
+      supportedGames: [matchedGameId],
+      participants: new Map(),
+      createdAt: Date.now(),
+    };
 
-          if (
-            ticket.consoleSystem !== "ANY" &&
-            openRoom.system &&
-            ticket.consoleSystem !== openRoom.system
-          ) {
-            continue;
-          }
+    const ws1 = socketIdToWs.get(player1.socketId) || peerIdToWs.get(player1.peerId);
+    const ws2 = socketIdToWs.get(player2.socketId) || peerIdToWs.get(player2.peerId);
 
-          matchmakingQueue.delete(ticket.peerId);
+    if (ws1 && ws1.readyState === WebSocket.OPEN) {
+      const part1: RoomParticipant = {
+        ws: ws1,
+        peerId: player1.peerId,
+        username: meta1.username,
+        role: "player1",
+        isReady: true,
+        ping: 0,
+      };
+      newRoom.participants.set(player1.peerId, part1);
+      setSocketRoom(ws1, roomId, player1.peerId, meta1.username);
 
-          const participant: RoomParticipant = {
-            ws: ticket.ws,
-            peerId: ticket.peerId,
-            username: ticket.username,
-            role: "player2",
-            isReady: true,
-            ping: 0,
-          };
-          openRoom.participants.set(ticket.peerId, participant);
-          setSocketRoom(ticket.ws, openRoom.id, ticket.peerId, ticket.username);
-
-          ticket.ws.send(
-            JSON.stringify({
-              type: "match-found",
-              roomId: openRoom.id,
-              code: openRoom.id,
-              roomNumber: openRoom.roomNumber,
-              peerId: ticket.peerId,
-              role: "player2",
-              opponentName: hostParticipant.username,
-              gameId: openRoom.gameId,
-              gameTitle: openRoom.gameTitle,
-              system: openRoom.system,
-              netplayMode: openRoom.netplayMode,
-              room: sanitizeRoom(openRoom),
-            })
-          );
-
-          broadcastToRoom(
-            openRoom,
-            {
-              type: "peer-joined",
-              peerId: ticket.peerId,
-              username: ticket.username,
-              role: "player2",
-              room: sanitizeRoom(openRoom),
-            },
-            ticket.peerId
-          );
-
-          console.log(
-            `[Matchmaking] Matched ${ticket.username} into waiting room ${openRoom.id} vs ${hostParticipant.username}`
-          );
-          break;
-        }
-      }
-    }
-
-    // 3. If searching for >= 3.5 seconds and no real opponent available, pair with active Challenger Bot
-    for (const ticket of matchmakingQueue.values()) {
-      if (ticket.ws.readyState !== WebSocket.OPEN) {
-        matchmakingQueue.delete(ticket.peerId);
-        continue;
-      }
-
-      const searchDuration = now - ticket.joinedAt;
-      if (searchDuration >= 3500) {
-        matchmakingQueue.delete(ticket.peerId);
-
-        const botNames = [
-          "RetroPro_UA 🇺🇦",
-          "CyberChallenger 🤖",
-          "ArcadeMaster_99 🕹️",
-          "PixelWarrior ⚔️",
-          "SpeedDemon_NES 🏎️",
-        ];
-        const botName = botNames[Math.floor(Math.random() * botNames.length)];
-        const matchRoomId = generateRoomCode();
-        const matchRoomNumber = generateRoomNumber();
-        const botPeerId = "bot_" + Math.random().toString(36).substring(2, 8);
-
-        const matchedSystem: string =
-          ticket.consoleSystem === "ANY" ? "NES" : ticket.consoleSystem;
-        const matchedGameId =
-          ticket.supportedGames.includes("ANY") || ticket.supportedGames.length === 0
-            ? matchedSystem === "GB" || matchedSystem === "GBC"
-              ? "gb-link-battle"
-              : "nes-netplay-arena-2p"
-            : ticket.supportedGames[0];
-        const matchedGameTitle =
-          matchedGameId === "gb-link-battle"
-            ? "Game Boy Link Duel (GB)"
-            : matchedGameId === "nes-netplay-pong"
-            ? "Hyper Pong Championship (NES)"
-            : matchedGameId === "nes-battle-city"
-            ? "Battle City (1985)"
-            : "Retro 2P Combat Arena (NES)";
-
-        const newRoom: Room = {
-          id: matchRoomId,
-          roomNumber: matchRoomNumber,
-          name: `${ticket.username} vs ${botName}`,
-          hostId: ticket.peerId,
-          gameTitle: matchedGameTitle,
-          gameId: matchedGameId,
-          system: matchedSystem,
-          netplayMode: ticket.netplayMode,
-          frameDelay: 2,
-          isPrivate: false,
-          inviteToken: "inv_" + Math.random().toString(36).substring(2, 10),
-          supportedGames: [matchedGameId],
-          participants: new Map(),
-          createdAt: now,
-        };
-
-        const participantUser: RoomParticipant = {
-          ws: ticket.ws,
-          peerId: ticket.peerId,
-          username: ticket.username,
-          role: "player1",
-          isReady: true,
-          ping: 0,
-        };
-
-        const participantBot: RoomParticipant = {
-          ws: ticket.ws,
-          peerId: botPeerId,
-          username: botName,
-          role: "player2",
-          isReady: true,
-          ping: 12,
-        };
-
-        newRoom.participants.set(ticket.peerId, participantUser);
-        newRoom.participants.set(botPeerId, participantBot);
-
-        rooms.set(matchRoomId, newRoom);
-        roomsByNumber.set(matchRoomNumber, newRoom);
-        setSocketRoom(ticket.ws, matchRoomId, ticket.peerId, ticket.username);
-
-        try {
-          ticket.ws.send(
-            JSON.stringify({
-              type: "match-found",
-              roomId: matchRoomId,
-              code: matchRoomId,
-              roomNumber: matchRoomNumber,
-              peerId: ticket.peerId,
-              role: "player1",
-              opponentName: botName,
-              gameId: matchedGameId,
-              gameTitle: matchedGameTitle,
-              system: matchedSystem,
-              netplayMode: ticket.netplayMode,
-              room: sanitizeRoom(newRoom),
-            })
-          );
-        } catch {}
-        continue;
-      }
-
-      // Periodically update client with active queue status and count
       try {
-        ticket.ws.send(
+        ws1.send(
           JSON.stringify({
-            type: "matchmaking-status",
-            status: "searching",
-            queueLength: matchmakingQueue.size,
-            searchDurationSeconds: Math.floor(searchDuration / 1000),
+            type: "match-found",
+            roomId,
+            code: roomId,
+            roomNumber,
+            peerId: player1.peerId,
+            role: "player1",
+            opponentName: meta2.username,
+            opponentPeerId: player2.peerId,
+            gameId: matchedGameId,
+            gameTitle: matchedGameTitle,
+            system: matchedSystem,
+            netplayMode: newRoom.netplayMode,
+            room: sanitizeRoom(newRoom),
+            isBot: !!isBot,
           })
         );
       } catch {}
     }
-  }
 
-  // Periodic Matchmaking Queue Scanner
-  setInterval(tryMatchmaking, 800);
+    if (ws2 && ws2.readyState === WebSocket.OPEN) {
+      const part2: RoomParticipant = {
+        ws: ws2,
+        peerId: player2.peerId,
+        username: meta2.username,
+        role: "player2",
+        isReady: true,
+        ping: 0,
+      };
+      newRoom.participants.set(player2.peerId, part2);
+      setSocketRoom(ws2, roomId, player2.peerId, meta2.username);
+
+      try {
+        ws2.send(
+          JSON.stringify({
+            type: "match-found",
+            roomId,
+            code: roomId,
+            roomNumber,
+            peerId: player2.peerId,
+            role: "player2",
+            opponentName: meta1.username,
+            opponentPeerId: player1.peerId,
+            gameId: matchedGameId,
+            gameTitle: matchedGameTitle,
+            system: matchedSystem,
+            netplayMode: newRoom.netplayMode,
+            room: sanitizeRoom(newRoom),
+            isBot: false,
+          })
+        );
+      } catch {}
+    } else if (isBot && ws1 && ws1.readyState === WebSocket.OPEN) {
+      const botPart: RoomParticipant = {
+        ws: ws1,
+        peerId: player2.peerId,
+        username: meta2.username,
+        role: "player2",
+        isReady: true,
+        ping: 12,
+      };
+      newRoom.participants.set(player2.peerId, botPart);
+    }
+
+    rooms.set(roomId, newRoom);
+    roomsByNumber.set(roomNumber, newRoom);
+    console.log(`[Matchmaking] Room ${roomId} created for ${meta1.username} vs ${meta2.username} (Node: ${matchmaker.nodeId})`);
+  };
+
+  matchmaker.onSignalingMessage = (signal: SignalingPayload) => {
+    const targetWs = peerIdToWs.get(signal.targetPeerId) || socketIdToWs.get(signal.targetPeerId);
+    if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+      try {
+        targetWs.send(
+          JSON.stringify({
+            type: signal.type,
+            senderPeerId: signal.senderPeerId,
+            payload: signal.payload,
+          })
+        );
+      } catch {}
+    }
+  };
+
+  matchmaker.onQueueStatus = (peerId: string, status: "searching" | "idle", queueLength: number) => {
+    const ws = peerIdToWs.get(peerId);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "matchmaking-status",
+            status,
+            queueLength,
+            nodeId: matchmaker.nodeId,
+          })
+        );
+      } catch {}
+    }
+  };
+
 
   // Periodic cleanup for empty dynamic rooms (> 15 minutes inactive)
   setInterval(() => {
@@ -982,9 +813,13 @@ async function startServer() {
   });
 
   wss.on("connection", (ws: WebSocket) => {
+    const socketId = "sock_" + Math.random().toString(36).substring(2, 11);
+    socketIdToWs.set(socketId, ws);
+    wsToSocketId.set(ws, socketId);
+
     setSocketRoom(ws, null, null, "Player");
 
-    ws.on("message", (rawMessage: string) => {
+    ws.on("message", async (rawMessage: string) => {
       try {
         const data = JSON.parse(rawMessage.toString());
         const { type, roomId, peerId } = data;
@@ -997,45 +832,43 @@ async function startServer() {
         const currentRoomId = session.roomId || (roomId ? parseRoomKey(roomId) : null);
         const currentPeerId = session.peerId || peerId;
 
+        if (currentPeerId) {
+          peerIdToWs.set(currentPeerId, ws);
+        }
+
         switch (type) {
           case "start-matchmaking": {
-            const { consoleSystem, supportedGames, netplayMode, username } = data;
+            const { consoleSystem, supportedGames, netplayMode, username, recentPairs } = data;
             const myPeerId = peerId || "peer_" + Math.random().toString(36).substring(2, 9);
+            const mySockId = wsToSocketId.get(ws) || socketId;
+            peerIdToWs.set(myPeerId, ws);
+
             session.peerId = myPeerId;
             session.username = username || "Player";
             session.isMatchmaking = true;
 
-            const ticket: MatchmakingTicket = {
-              ticketId: "ticket_" + Math.random().toString(36).substring(2, 9),
+            const waitingPlayer: WaitingPlayer = {
               peerId: myPeerId,
-              ws,
+              socketId: mySockId,
+              nodeId: matchmaker.nodeId,
+              queuedAt: Date.now(),
+              recentPairs: Array.isArray(recentPairs) ? recentPairs : [],
+            };
+
+            playerMetadata.set(myPeerId, {
               username: session.username,
               consoleSystem: consoleSystem || "ANY",
               supportedGames: Array.isArray(supportedGames) ? supportedGames : ["ANY"],
               netplayMode: netplayMode || "rollback",
-              joinedAt: Date.now(),
-            };
+            });
 
-            matchmakingQueue.set(myPeerId, ticket);
-
-            ws.send(
-              JSON.stringify({
-                type: "matchmaking-status",
-                status: "searching",
-                queueLength: matchmakingQueue.size,
-                consoleSystem: ticket.consoleSystem,
-                supportedGames: ticket.supportedGames,
-              })
-            );
-
-            // Trigger immediate matchmaking attempt
-            tryMatchmaking();
+            await matchmaker.enqueue(waitingPlayer);
             break;
           }
 
           case "cancel-matchmaking": {
             if (session.peerId) {
-              matchmakingQueue.delete(session.peerId);
+              await matchmaker.dequeue(session.peerId);
             }
             session.isMatchmaking = false;
             ws.send(
@@ -1066,7 +899,7 @@ async function startServer() {
             const inviteToken = "inv_" + Math.random().toString(36).substring(2, 10);
 
             // Remove from matchmaking if they were searching
-            if (session.peerId) matchmakingQueue.delete(session.peerId);
+            if (session.peerId) matchmaker.dequeue(session.peerId);
 
             const newRoom: Room = {
               id: newRoomId,
@@ -1130,7 +963,7 @@ async function startServer() {
             const targetRoomId = targetRoom.id;
             targetRoom.emptySince = undefined;
 
-            if (session.peerId) matchmakingQueue.delete(session.peerId);
+            if (session.peerId) matchmaker.dequeue(session.peerId);
 
             const newPeerId = peerId || "peer_" + Math.random().toString(36).substring(2, 9);
             const hasP1 = Array.from(targetRoom.participants.values()).some(
@@ -1313,9 +1146,13 @@ async function startServer() {
             const targetPeerId = data.targetPeerId;
             let targetSocket: WebSocket | null = null;
 
-            if (room && targetPeerId) {
+            if (targetPeerId) {
+              targetSocket = peerIdToWs.get(targetPeerId) || null;
+            }
+
+            if (!targetSocket && room && targetPeerId) {
               const target = room.participants.get(targetPeerId);
-              if (target && target.ws.readyState === WebSocket.OPEN) {
+              if (target && target.ws && target.ws.readyState === WebSocket.OPEN) {
                 targetSocket = target.ws;
               }
             }
@@ -1324,14 +1161,14 @@ async function startServer() {
             if (!targetSocket && targetPeerId) {
               for (const r of rooms.values()) {
                 const p = r.participants.get(targetPeerId);
-                if (p && p.ws.readyState === WebSocket.OPEN) {
+                if (p && p.ws && p.ws.readyState === WebSocket.OPEN) {
                   targetSocket = p.ws;
                   break;
                 }
               }
             }
 
-            if (targetSocket) {
+            if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
               targetSocket.send(
                 JSON.stringify({
                   type: data.type,
@@ -1339,6 +1176,15 @@ async function startServer() {
                   payload: data.payload,
                 })
               );
+            } else if (targetPeerId) {
+              // Cross-node Redis Pub/Sub signaling relay
+              matchmaker.relaySignaling({
+                type: data.type,
+                targetPeerId,
+                senderPeerId: currentPeerId || "",
+                payload: data.payload,
+                roomId: activeRoomId || undefined,
+              });
             } else if (room) {
               broadcastToRoom(
                 room,
@@ -1399,9 +1245,17 @@ async function startServer() {
       const session = socketSessions.get(ws);
       const closePeerId = session?.peerId;
       const closeRoomId = session?.roomId;
+      const sockId = wsToSocketId.get(ws);
+
+      if (sockId) {
+        socketIdToWs.delete(sockId);
+        wsToSocketId.delete(ws);
+      }
 
       if (closePeerId) {
-        matchmakingQueue.delete(closePeerId);
+        peerIdToWs.delete(closePeerId);
+        playerMetadata.delete(closePeerId);
+        matchmaker.dequeue(closePeerId);
       }
 
       if (closeRoomId && closePeerId) {

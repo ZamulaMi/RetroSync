@@ -12,6 +12,15 @@ export type PlayerRole = "player1" | "player2" | "spectator";
 
 export type ScreenFilter = "pixel-perfect" | "crt-scanlines" | "lcd-grid" | "smooth-bilinear" | "gameboy-green";
 
+export type ColorPaletteId =
+  | "fbx-smooth"
+  | "nestopia-rgb"
+  | "composite-crt"
+  | "sony-cxa"
+  | "fceux-classic"
+  | "gameboy-dmg"
+  | "monochrome";
+
 export interface GamepadButtonMap {
   up: string;
   down: string;
@@ -95,11 +104,20 @@ export interface RoomInfo {
   supportedGames?: string[];
 }
 
+export interface WaitingPlayer {
+  peerId: string;
+  socketId: string;
+  nodeId: string;
+  queuedAt: number;
+  recentPairs: string[]; // список останніх N peerId для уникнення повторного з'єднання з тим самим гравцем
+}
+
 export interface MatchmakingCriteria {
   consoleSystem: ConsoleSystem | "ANY";
   supportedGames: string[];
   netplayMode: NetplayMode;
   username?: string;
+  recentPairs?: string[];
 }
 
 export type MatchmakingStatus = "idle" | "searching" | "matched" | "connecting" | "timeout";

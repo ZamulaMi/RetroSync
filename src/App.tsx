@@ -25,6 +25,7 @@ import {
   PlayerRole,
   RoomInfo,
   ScreenFilter,
+  ColorPaletteId,
 } from "./types";
 import { DEMO_ROMS } from "./emulator/demoRoms";
 import { parseRoomIdentifier } from "./utils/roomUtils";
@@ -43,6 +44,7 @@ export default function App() {
   const [system, setSystem] = useState<ConsoleSystem>("NES");
   const [gameTitle, setGameTitle] = useState<string>("Retro 2P Combat Arena (NES)");
   const [screenFilter, setScreenFilter] = useState<ScreenFilter>("pixel-perfect");
+  const [colorPalette, setColorPalette] = useState<ColorPaletteId>("fbx-smooth");
   const [volume, setVolume] = useState<number>(0.8);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -302,6 +304,15 @@ export default function App() {
     controller.p2KeyMap = map;
   };
 
+  const handlePaletteChange = (palette: ColorPaletteId) => {
+    setColorPalette(palette);
+    controller.emulator.setColorPalette(palette);
+    setStatusToast({
+      message: `Колірна палітра: ${palette.toUpperCase()}`,
+      type: "info",
+    });
+  };
+
   return (
     <div
       id="app-root-container"
@@ -351,6 +362,8 @@ export default function App() {
         onToggleMute={handleToggleMute}
         filter={screenFilter}
         onFilterChange={setScreenFilter}
+        palette={colorPalette}
+        onPaletteChange={handlePaletteChange}
         isFullscreen={isFullscreen}
         onToggleFullscreen={handleToggleFullscreen}
         onOpenControls={() => setShowControlsModal(true)}

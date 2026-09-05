@@ -4,6 +4,7 @@
  */
 
 import { RetroAudioEngine } from "./audio";
+import { ColorPaletteId, hexRgb } from "./nesPalettes";
 
 export const GB_BUTTONS = {
   A: 0,
@@ -23,6 +24,7 @@ export class GameBoyEmulator {
   private audio: RetroAudioEngine;
   private isLoaded: boolean = false;
   private currentFrame: number = 0;
+  private currentPaletteId: ColorPaletteId = "gameboy-dmg";
   private romData: Uint8Array | null = null;
   private p1InputMask: number = 0;
   private p2InputMask: number = 0;
@@ -177,6 +179,36 @@ export class GameBoyEmulator {
 
   public getCurrentFrame(): number {
     return this.currentFrame;
+  }
+
+  public setColorPalette(paletteId: ColorPaletteId) {
+    this.currentPaletteId = paletteId;
+    if (paletteId === "gameboy-dmg") {
+      this.classicPalette = [
+        hexRgb(0x9bbc0f),
+        hexRgb(0x8bac0f),
+        hexRgb(0x306230),
+        hexRgb(0x0f380f),
+      ];
+    } else if (paletteId === "monochrome") {
+      this.classicPalette = [
+        hexRgb(0xffffff),
+        hexRgb(0xaaaaaa),
+        hexRgb(0x555555),
+        hexRgb(0x000000),
+      ];
+    } else {
+      this.classicPalette = [
+        hexRgb(0xf8f8f8),
+        hexRgb(0x90a0c0),
+        hexRgb(0x405070),
+        hexRgb(0x101820),
+      ];
+    }
+  }
+
+  public getColorPalette(): ColorPaletteId {
+    return this.currentPaletteId;
   }
 
   public reset() {

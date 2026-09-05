@@ -301,6 +301,17 @@ export class NetplayController {
       this.myRole = data.role as PlayerRole;
       this.netplayMode = data.netplayMode as NetplayMode;
 
+      // Save opponent peerId to recent pairs in localStorage
+      const oppId = (data.opponentPeerId as string) || (data.opponentName as string);
+      if (oppId) {
+        try {
+          const raw = localStorage.getItem("recent_netplay_pairs");
+          let list: string[] = raw ? JSON.parse(raw) : [];
+          list = [oppId, ...list.filter((x) => x !== oppId)].slice(0, 5);
+          localStorage.setItem("recent_netplay_pairs", JSON.stringify(list));
+        } catch {}
+      }
+
       this.rollbackEngine.setLocalRole(this.myRole);
       this.lockstepEngine.setLocalRole(this.myRole);
 
@@ -581,12 +592,23 @@ export class NetplayController {
   // Matchmaking Actions
   public startMatchmaking(criteria: MatchmakingCriteria) {
     this.matchmakingStatus = "searching";
+    let storedRecents: string[] = [];
+    try {
+      const raw = localStorage.getItem("recent_netplay_pairs");
+      if (raw) storedRecents = JSON.parse(raw);
+    } catch {}
+
+    const combinedRecents = Array.from(
+      new Set([...(criteria.recentPairs || []), ...storedRecents])
+    ).slice(0, 5);
+
     this.signaling.send({
       type: "start-matchmaking",
       consoleSystem: criteria.consoleSystem,
       supportedGames: criteria.supportedGames,
       netplayMode: criteria.netplayMode,
       username: this.myUsername,
+      recentPairs: combinedRecents,
     });
     if (this.onMatchmakingStatusChange) this.onMatchmakingStatusChange("searching");
   }

@@ -12,8 +12,10 @@ import {
   Sparkles,
   Users,
   Globe,
+  Palette,
 } from "lucide-react";
 import { GamePlayMode, RoomInfo, ScreenFilter } from "../types";
+import { ColorPaletteId, PALETTES } from "../emulator/nesPalettes";
 
 interface HeaderProps {
   gamePlayMode: GamePlayMode;
@@ -25,6 +27,8 @@ interface HeaderProps {
   onToggleMute: () => void;
   filter: ScreenFilter;
   onFilterChange: (f: ScreenFilter) => void;
+  palette: ColorPaletteId;
+  onPaletteChange: (p: ColorPaletteId) => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   onOpenControls: () => void;
@@ -42,6 +46,8 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMute,
   filter,
   onFilterChange,
+  palette,
+  onPaletteChange,
   isFullscreen,
   onToggleFullscreen,
   onOpenControls,
@@ -125,6 +131,23 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Controls */}
       <div className="flex items-center gap-2">
+        {/* Authentic Color Palette Selector */}
+        <div className="relative flex items-center bg-slate-800 rounded-lg p-1 border border-slate-700 text-xs" title="Автентична палітра кольорів емулятора">
+          <Palette className="w-3.5 h-3.5 text-indigo-400 ml-1.5 mr-1" />
+          <select
+            id="palette-selector"
+            value={palette}
+            onChange={(e) => onPaletteChange(e.target.value as ColorPaletteId)}
+            className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer pr-1"
+          >
+            {Object.values(PALETTES).map((pal) => (
+              <option key={pal.id} value={pal.id} className="bg-slate-900 text-slate-200">
+                {pal.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* Shaders / Screen Filter */}
         <div className="relative flex items-center bg-slate-800 rounded-lg p-1 border border-slate-700 text-xs">
           <Sparkles className="w-3.5 h-3.5 text-slate-400 ml-1.5 mr-1" />

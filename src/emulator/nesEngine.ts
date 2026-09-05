@@ -6,6 +6,7 @@
 
 import * as jsnes from "jsnes";
 import { RetroAudioEngine } from "./audio";
+import { hexRgb, applyPaletteToNes, ColorPaletteId, PALETTES } from "./nesPalettes";
 
 // NES Standard Controller bitmask constants
 export const NES_BUTTONS = {
@@ -30,6 +31,7 @@ export class NesEmulator {
   private demoType: "arena" | "pong" | "snes" | "gba" = "arena";
   private rawRomData: Uint8Array | string | null = null;
   private currentFrame: number = 0;
+  private currentPalette: ColorPaletteId = "fbx-smooth";
   private p1InputMask: number = 0;
   private p2InputMask: number = 0;
   private prevP1Mask: number = 0;
@@ -97,19 +99,16 @@ export class NesEmulator {
     // Initialize JSNES
     this.nes = new jsnes.NES({
       onFrame: (buffer: Uint32Array) => {
-        // JSNES outputs 256x240 pixel integers in 0x00RRGGBB format: (R << 16) | (G << 8) | B
-        // HTML5 Canvas ImageData uses a little-endian byte array [R, G, B, A]
-        // In a little-endian 32-bit integer, Byte 0 (bits 0..7) is Red and Byte 2 (bits 16..23) is Blue.
-        // Therefore, we convert 0x00RRGGBB to little-endian 0xAABBGGRR:
-        // Byte 0 = R, Byte 1 = G, Byte 2 = B, Byte 3 = 0xFF (Alpha)
+        // JSNES palette entries are mapped in Little-Endian Canvas format ((B << 16) | (G << 8) | R)
+        // Canvas ImageData on Little-Endian systems places:
+        // Byte 0 (bits 0..7)   = Red
+        // Byte 1 (bits 8..15)  = Green
+        // Byte 2 (bits 16..23) = Blue
+        // Byte 3 (bits 24..31) = Alpha (0xFF)
+        // Adding 0xff000000 ensures 100% opacity without swapping Red and Blue channels.
         const len = buffer.length;
         for (let i = 0; i < len; i++) {
-          const val = buffer[i];
-          this.frameBuffer32[i] =
-            0xff000000 |
-            ((val & 0xff) << 16) |
-            (val & 0x00ff00) |
-            ((val >> 16) & 0xff);
+          this.frameBuffer32[i] = 0xff000000 | buffer[i];
         }
       },
       onAudioSample: (left: number, right: number) => {
@@ -118,6 +117,16 @@ export class NesEmulator {
       sampleRate: 44100,
     });
     this.patchPpuSpriteRendering();
+    this.setColorPalette("fbx-smooth");
+  }
+
+  public setColorPalette(paletteId: ColorPaletteId) {
+    this.currentPalette = paletteId;
+    applyPaletteToNes(this.nes, paletteId);
+  }
+
+  public getColorPalette(): ColorPaletteId {
+    return this.currentPalette;
   }
 
   /**
@@ -272,6 +281,7 @@ export class NesEmulator {
         this.nes.loadROM(binaryStr);
       }
       this.patchPpuSpriteRendering();
+      this.setColorPalette(this.currentPalette);
       this.isLoaded = true;
       return true;
     } catch (err) {
@@ -460,7 +470,7 @@ export class NesEmulator {
       s.ballVx = Math.min(5.5, Math.abs(s.ballVx) * 1.05 + 0.1);
       s.ballVy = hitOffset * 3.5;
       this.audio.writeSample(0.3);
-      this.spawnParticles(s.ballX, s.ballY, 0xff00ffff, 6);
+      this.spawnParticles(s.ballX, s.ballY, hexRgb(0x00ffff), 6);
     }
 
     // Paddle 2 Collision
@@ -470,7 +480,7 @@ export class NesEmulator {
       s.ballVx = -Math.min(5.5, Math.abs(s.ballVx) * 1.05 + 0.1);
       s.ballVy = hitOffset * 3.5;
       this.audio.writeSample(0.3);
-      this.spawnParticles(s.ballX, s.ballY, 0xffff6600, 6);
+      this.spawnParticles(s.ballX, s.ballY, hexRgb(0xff6600), 6);
     }
 
     // Goal conditions
@@ -508,7 +518,7 @@ export class NesEmulator {
     if ((p1 & (1 << NES_BUTTONS.A)) && s.p1Y >= groundY) {
       s.p1Vy = -7.0;
       this.audio.writeSample(0.2);
-      this.spawnParticles(s.p1X, groundY, 0xff38bdf8, 4);
+      this.spawnParticles(s.p1X, groundY, hexRgb(0x38bdf8), 4);
     }
     // Attack / Strike (B)
     if (p1 & (1 << NES_BUTTONS.B)) {
@@ -533,7 +543,7 @@ export class NesEmulator {
         if (dist < 32 && Math.abs(s.p1Y - s.p2Y) < 24) {
           s.p2Health = Math.max(0, s.p2Health - 12);
           s.p2Vx = s.p1FacingRight ? 4.0 : -4.0;
-          this.spawnParticles(s.p2X, s.p2Y - 10, 0xffef4444, 10);
+          this.spawnParticles(s.p2X, s.p2Y - 10, hexRgb(0xef4444), 10);
           if (s.p2Health <= 0) {
             s.p1Score++;
             s.bannerText = "PLAYER 1 WINS ROUND!";
@@ -556,7 +566,7 @@ export class NesEmulator {
     if ((p2 & (1 << NES_BUTTONS.A)) && s.p2Y >= groundY) {
       s.p2Vy = -7.0;
       this.audio.writeSample(0.2);
-      this.spawnParticles(s.p2X, groundY, 0xfff87171, 4);
+      this.spawnParticles(s.p2X, groundY, hexRgb(0xf87171), 4);
     }
     if (p2 & (1 << NES_BUTTONS.B)) {
       if (s.p2Action !== "attack" && s.p2ActionTimer === 0) {
@@ -579,7 +589,7 @@ export class NesEmulator {
         if (dist < 32 && Math.abs(s.p1Y - s.p2Y) < 24) {
           s.p1Health = Math.max(0, s.p1Health - 12);
           s.p1Vx = s.p2FacingRight ? 4.0 : -4.0;
-          this.spawnParticles(s.p1X, s.p1Y - 10, 0xff06b6d4, 10);
+          this.spawnParticles(s.p1X, s.p1Y - 10, hexRgb(0x06b6d4), 10);
           if (s.p1Health <= 0) {
             s.p2Score++;
             s.bannerText = "PLAYER 2 WINS ROUND!";
@@ -645,7 +655,7 @@ export class NesEmulator {
       if (p.owner === 2 && Math.abs(p.x - s.p1X) < 14 && Math.abs(p.y - (s.p1Y - 12)) < 16) {
         s.p1Health = Math.max(0, s.p1Health - 8);
         s.p1Vx = p.vx > 0 ? 3 : -3;
-        this.spawnParticles(p.x, p.y, 0xff06b6d4, 8);
+        this.spawnParticles(p.x, p.y, hexRgb(0x06b6d4), 8);
         s.projectiles.splice(i, 1);
         continue;
       }
@@ -653,7 +663,7 @@ export class NesEmulator {
       if (p.owner === 1 && Math.abs(p.x - s.p2X) < 14 && Math.abs(p.y - (s.p2Y - 12)) < 16) {
         s.p2Health = Math.max(0, s.p2Health - 8);
         s.p2Vx = p.vx > 0 ? 3 : -3;
-        this.spawnParticles(p.x, p.y, 0xffef4444, 8);
+        this.spawnParticles(p.x, p.y, hexRgb(0xef4444), 8);
         s.projectiles.splice(i, 1);
         continue;
       }
@@ -696,27 +706,28 @@ export class NesEmulator {
 
     // Background Gradient (Dark Navy / Indigo Space)
     for (let y = 0; y < 240; y++) {
-      const bgShade = 0xff100818 + Math.floor((y / 240) * 0x14);
+      const shade = Math.floor((y / 240) * 0x14);
+      const bgShade = hexRgb(0x100818 + (shade << 16) + (shade << 8) + shade);
       for (let x = 0; x < 256; x++) {
         // Grid dots
         const isDot = (x % 16 === 0 && y % 16 === 0) && y > 24;
-        fb[y * 256 + x] = isDot ? 0xff332244 : bgShade;
+        fb[y * 256 + x] = isDot ? hexRgb(0x332244) : bgShade;
       }
     }
 
     // Arena Boundary Lines (Top & Bottom)
     for (let x = 0; x < 256; x++) {
-      fb[24 * 256 + x] = 0xff6366f1;
-      fb[25 * 256 + x] = 0xff818cf8;
-      fb[238 * 256 + x] = 0xff6366f1;
-      fb[239 * 256 + x] = 0xff818cf8;
+      fb[24 * 256 + x] = hexRgb(0x6366f1);
+      fb[25 * 256 + x] = hexRgb(0x818cf8);
+      fb[238 * 256 + x] = hexRgb(0x6366f1);
+      fb[239 * 256 + x] = hexRgb(0x818cf8);
     }
 
     // Center Dashed Net
     for (let y = 30; y < 232; y++) {
       if (Math.floor(y / 8) % 2 === 0) {
-        fb[y * 256 + 127] = 0xff475569;
-        fb[y * 256 + 128] = 0xffcbd5e1;
+        fb[y * 256 + 127] = hexRgb(0x475569);
+        fb[y * 256 + 128] = hexRgb(0xcbd5e1);
       }
     }
 
@@ -724,7 +735,7 @@ export class NesEmulator {
     const p1Y = Math.round(s.p1Y);
     for (let py = Math.max(26, p1Y - 18); py <= Math.min(234, p1Y + 18); py++) {
       for (let px = 16; px <= 22; px++) {
-        fb[py * 256 + px] = px === 16 || px === 22 ? 0xff06b6d4 : 0xff38bdf8;
+        fb[py * 256 + px] = px === 16 || px === 22 ? hexRgb(0x06b6d4) : hexRgb(0x38bdf8);
       }
     }
 
@@ -732,7 +743,7 @@ export class NesEmulator {
     const p2Y = Math.round(s.p2Y);
     for (let py = Math.max(26, p2Y - 18); py <= Math.min(234, p2Y + 18); py++) {
       for (let px = 234; px <= 240; px++) {
-        fb[py * 256 + px] = px === 234 || px === 240 ? 0xfff97316 : 0xfffbbf24;
+        fb[py * 256 + px] = px === 234 || px === 240 ? hexRgb(0xf97316) : hexRgb(0xfbbf24);
       }
     }
 
@@ -752,8 +763,8 @@ export class NesEmulator {
     }
 
     // Top Header Scoreboard
-    this.drawDigit(80, 8, s.p1Score, 0xff38bdf8);
-    this.drawDigit(168, 8, s.p2Score, 0xfffbbf24);
+    this.drawDigit(80, 8, s.p1Score, hexRgb(0x38bdf8));
+    this.drawDigit(168, 8, s.p2Score, hexRgb(0xfbbf24));
 
     // Render particles
     for (const p of s.particles) {
@@ -775,11 +786,12 @@ export class NesEmulator {
 
     // Arena Sky / Parallax Starfield
     for (let y = 0; y < 196; y++) {
-      const gradient = 0xff0f0b1e + Math.floor((y / 196) * 0x22);
+      const shade = Math.floor((y / 196) * 0x22);
+      const gradient = hexRgb(0x0f0b1e + (shade << 8) + shade);
       for (let x = 0; x < 256; x++) {
         // Parallax stars
         const star = (Math.sin(x * 12.3 + y * 7.1) > 0.985);
-        fb[y * 256 + x] = star ? 0xffe2e8f0 : gradient;
+        fb[y * 256 + x] = star ? hexRgb(0xe2e8f0) : gradient;
       }
     }
 
@@ -791,16 +803,16 @@ export class NesEmulator {
         const gridX = ((x + scanX) % Math.max(4, Math.floor(depth * 0.8))) === 0;
         const gridY = (depth % 6 === 0);
         if (gridX || gridY) {
-          fb[y * 256 + x] = 0xff6366f1;
+          fb[y * 256 + x] = hexRgb(0x6366f1);
         } else {
-          fb[y * 256 + x] = 0xff1e1b4b;
+          fb[y * 256 + x] = hexRgb(0x1e1b4b);
         }
       }
     }
 
     // Top HUD: Health Bars, Names & Round Timer
     // P1 Label
-    this.drawText(16, 5, "P1", 0xff38bdf8);
+    this.drawText(16, 5, "P1", hexRgb(0x38bdf8));
     // P1 Health Bar (Cyan) with white outline
     for (let x = 16; x <= 106; x++) {
       for (let y = 13; y <= 19; y++) {
@@ -809,13 +821,13 @@ export class NesEmulator {
           fb[y * 256 + x] = 0xffffffff;
         } else {
           const fill = (x - 17) / 88 <= s.p1Health / 100;
-          fb[y * 256 + x] = fill ? 0xff06b6d4 : 0xff1e293b;
+          fb[y * 256 + x] = fill ? hexRgb(0x06b6d4) : hexRgb(0x1e293b);
         }
       }
     }
 
     // P2 Label
-    this.drawText(230, 5, "P2", 0xfff87171);
+    this.drawText(230, 5, "P2", hexRgb(0xf87171));
     // P2 Health Bar (Red/Amber) with white outline
     for (let x = 150; x <= 240; x++) {
       for (let y = 13; y <= 19; y++) {
@@ -824,30 +836,30 @@ export class NesEmulator {
           fb[y * 256 + x] = 0xffffffff;
         } else {
           const fill = (239 - x) / 88 <= s.p2Health / 100;
-          fb[y * 256 + x] = fill ? 0xffef4444 : 0xff1e293b;
+          fb[y * 256 + x] = fill ? hexRgb(0xef4444) : hexRgb(0x1e293b);
         }
       }
     }
 
     // Wins Counter
-    this.drawText(16, 23, `W:${s.p1Score}`, 0xffcbd5e1);
-    this.drawText(216, 23, `W:${s.p2Score}`, 0xffcbd5e1);
+    this.drawText(16, 23, `W:${s.p1Score}`, hexRgb(0xcbd5e1));
+    this.drawText(216, 23, `W:${s.p2Score}`, hexRgb(0xcbd5e1));
 
     // Timer Digits in center
-    this.drawDigit(120, 10, Math.floor(s.timer / 10), 0xfffbbf24);
-    this.drawDigit(130, 10, s.timer % 10, 0xfffbbf24);
+    this.drawDigit(120, 10, Math.floor(s.timer / 10), hexRgb(0xfbbf24));
+    this.drawDigit(130, 10, s.timer % 10, hexRgb(0xfbbf24));
 
-    // Render Player 1 Sprite (Cyan/Blue Fighter)
-    this.drawFighter(Math.round(s.p1X), Math.round(s.p1Y), 0xff0284c7, 0xff38bdf8, s.p1FacingRight, s.p1Action === "attack", s.p1Health <= 0);
+    // Render Player 1 Sprite (Cyan/Sky Blue Fighter)
+    this.drawFighter(Math.round(s.p1X), Math.round(s.p1Y), hexRgb(0x0284c7), hexRgb(0x38bdf8), s.p1FacingRight, s.p1Action === "attack", s.p1Health <= 0);
 
-    // Render Player 2 Sprite (Red/Rose Fighter)
-    this.drawFighter(Math.round(s.p2X), Math.round(s.p2Y), 0xffdc2626, 0xfff87171, s.p2FacingRight, s.p2Action === "attack", s.p2Health <= 0);
+    // Render Player 2 Sprite (Crimson/Rose Fighter)
+    this.drawFighter(Math.round(s.p2X), Math.round(s.p2Y), hexRgb(0xdc2626), hexRgb(0xf87171), s.p2FacingRight, s.p2Action === "attack", s.p2Health <= 0);
 
     // Render Active Projectiles & Energy Blasts
     for (const proj of s.projectiles) {
       const px = Math.round(proj.x);
       const py = Math.round(proj.y);
-      const col = proj.owner === 1 ? 0xff38bdf8 : 0xfffb7185;
+      const col = proj.owner === 1 ? hexRgb(0x38bdf8) : hexRgb(0xfb7185);
       for (let dy = -2; dy <= 2; dy++) {
         for (let dx = -3; dx <= 3; dx++) {
           if (px + dx >= 0 && px + dx < 256 && py + dy >= 0 && py + dy < 240) {
@@ -873,11 +885,11 @@ export class NesEmulator {
       for (let by = bannerY - 12; by <= bannerY + 16; by++) {
         for (let bx = 30; bx <= 226; bx++) {
           const isBorder = by === bannerY - 12 || by === bannerY + 16 || bx === 30 || bx === 226;
-          fb[by * 256 + bx] = isBorder ? 0xfffbbf24 : 0xee0f172a;
+          fb[by * 256 + bx] = isBorder ? hexRgb(0xfbbf24) : hexRgb(0x0f172a, 238);
         }
       }
       const startX = 128 - (s.bannerText.length * 6) / 2;
-      this.drawText(Math.round(startX), bannerY - 3, s.bannerText, 0xfffde047);
+      this.drawText(Math.round(startX), bannerY - 3, s.bannerText, hexRgb(0xfde047));
     }
   }
 
@@ -892,7 +904,7 @@ export class NesEmulator {
           const px = x + dx;
           const py = y + dy;
           if (px >= 0 && px < 256 && py >= 0 && py < 240) {
-            fb[py * 256 + px] = dx < -6 ? 0xfffde047 : bodyColor;
+            fb[py * 256 + px] = dx < -6 ? hexRgb(0xfde047) : bodyColor;
           }
         }
       }
@@ -908,7 +920,7 @@ export class NesEmulator {
           const rSq = dx * dx + (dy + 20) * (dy + 20);
           if (rSq <= 20) {
             // Head skin / helmet
-            fb[py * 256 + px] = (dy <= -22) ? 0xfff59e0b : 0xfffed7aa;
+            fb[py * 256 + px] = (dy <= -22) ? hexRgb(0xf59e0b) : hexRgb(0xfed7aa);
           }
         }
       }
@@ -917,7 +929,7 @@ export class NesEmulator {
     const eyeX = x + (dir > 0 ? 2 : -2);
     const eyeY = y - 20;
     if (eyeX >= 0 && eyeX < 256 && eyeY >= 0 && eyeY < 240) {
-      fb[eyeY * 256 + eyeX] = 0xff0f172a;
+      fb[eyeY * 256 + eyeX] = hexRgb(0x0f172a);
     }
 
     // 2. Torso (Armor & Belt)
@@ -928,7 +940,7 @@ export class NesEmulator {
         if (px >= 0 && px < 256 && py >= 0 && py < 240) {
           if (dy === -4) {
             // Belt
-            fb[py * 256 + px] = (dx === 0) ? 0xfffbbf24 : 0xff1e293b;
+            fb[py * 256 + px] = (dx === 0) ? hexRgb(0xfbbf24) : hexRgb(0x1e293b);
           } else if (Math.abs(dx) === 5 || dy === -14) {
             // Shoulder / Trim
             fb[py * 256 + px] = trimColor;
@@ -950,7 +962,7 @@ export class NesEmulator {
           const px = lx + ldx;
           const py = y + dy;
           if (px >= 0 && px < 256 && py >= 0 && py < 240) {
-            fb[py * 256 + px] = (dy === 0) ? 0xff0f172a : trimColor;
+            fb[py * 256 + px] = (dy === 0) ? hexRgb(0x0f172a) : trimColor;
           }
         }
       }
@@ -966,7 +978,7 @@ export class NesEmulator {
           if (px >= 0 && px < 256 && py >= 0 && py < 240) {
             if (ext >= 13) {
               // Glowing Fist / Impact
-              fb[py * 256 + px] = 0xfffde047;
+              fb[py * 256 + px] = hexRgb(0xfde047);
             } else {
               fb[py * 256 + px] = trimColor;
             }

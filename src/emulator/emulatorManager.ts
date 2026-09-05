@@ -8,6 +8,7 @@ import { RetroAudioEngine } from "./audio";
 import { NesEmulator } from "./nesEngine";
 import { GameBoyEmulator } from "./gbEngine";
 import { createNesHomebrewRom, detectSystemFromROM } from "./demoRoms";
+import { ColorPaletteId } from "./nesPalettes";
 
 export class UniversalEmulator {
   public system: ConsoleSystem = "NES";
@@ -293,6 +294,15 @@ export class UniversalEmulator {
     } else {
       this.nesCore.reset();
     }
+  }
+
+  public setColorPalette(paletteId: ColorPaletteId) {
+    this.nesCore.setColorPalette(paletteId);
+    this.gbCore.setColorPalette(paletteId);
+  }
+
+  public getColorPalette(): ColorPaletteId {
+    return this.nesCore.getColorPalette();
   }
 
   public getRawRom(): Uint8Array | null {
